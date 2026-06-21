@@ -31,7 +31,7 @@ std = ["thiserror/std", "memchr"]
 [dependencies]
 derive_more = { version = "2", default-features = false, features = ["display", "from", "into", "is_variant", "unwrap", "try_unwrap"] }
 logos = { version = "0.16", default-features = false, features = ["export_derive"] }
-phf = { version = "0.13", default-features = false }
+phf = { version = "0.14", default-features = false }
 thiserror = { version = "2", default-features = false }
 
 memchr = { version = "2", optional = true, default-features = false }
