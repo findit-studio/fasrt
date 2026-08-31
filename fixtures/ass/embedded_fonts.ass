@@ -1,0 +1,30 @@
+[Script Info]
+Title: Embedded resources
+ScriptType: v4.00+
+WrapStyle: 0
+PlayResX: 1280
+PlayResY: 720
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Signature,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+
+[Fonts]
+fontname: Signature_0.ttf
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+2c:34;58<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnop
+;starts with a semicolon but is payload, not a comment
+FONTNAME:uppercase payload, not a header
+qrstuvwxyz{|}~!"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNO
+fontname: Signature_1.ttf
+PQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz0123456789:;<=>?@A
+
+[Graphics]
+filename: logo.bmp
+Qk1GAAAAAAAAADYAAAAoAAAAAQAAAAEAAAABABgAAAAAABAAAAASCwAAEgsA
+AAAAAAAAAAAA////AA==
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:04.00,Default,Aya,0,0,0,,Rendered with an embedded font.
+Dialogue: 0,0:00:04.10,0:00:07.00,Default,Aya,0,0,0,,The logo above is embedded too.

@@ -1,0 +1,22 @@
+[Script Info]
+Title: Opening karaoke
+ScriptType: v4.00+
+WrapStyle: 0
+PlayResX: 1280
+PlayResY: 720
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Romaji,Comic Sans MS,44,&H00FFFFFF,&H0000FFFF,&H00301000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,8,20,20,20,1
+Style: Kanji,MS PGothic,40,&H00FFFFFF,&H0000FFFF,&H00301000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,20,20,20,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Comment: 0,0:00:00.00,0:00:00.00,Romaji,,0,0,0,karaoke,template line — not rendered
+Dialogue: 0,0:00:03.12,0:00:07.44,Romaji,,0,0,0,fx,{\k21}ki{\k18}mi{\k30}no{\k24} {\k27}ko{\k22}e{\k35}ga
+Dialogue: 0,0:00:07.50,0:00:11.80,Romaji,,0,0,0,fx,{\kf25}to{\kf20}o{\kf40}ku{\kf15} {\kf33}ni{\kf28}ru
+Dialogue: 0,0:00:11.90,0:00:16.20,Romaji,,0,0,0,fx,{\ko19}a{\ko23}shi{\ko31}ta{\ko17}wo{\ko29}sa{\ko26}ga{\ko34}su
+Dialogue: 0,0:00:16.30,0:00:20.55,Romaji,,0,0,0,fx,{\K22}ma{\K26}da{\K30}mi{\K18}nu
+Dialogue: 1,0:00:03.12,0:00:07.44,Kanji,,0,0,0,,{\k21}君{\k18}の{\k30}声{\k24}が
+Dialogue: 1,0:00:07.50,0:00:11.80,Kanji,,0,0,0,,{\kf25}遠{\kf20}く{\kf40}な{\kf15}る
+Dialogue: 0,0:00:20.60,0:00:24.00,Romaji,,0,0,0,fx,{\k15\1c&HFFD700&}glow{\k20\1c&HFFFFFF&}back

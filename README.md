@@ -3,7 +3,7 @@
 </div>
 <div align="center">
 
-A blazing fast, zero-copy subtitle parser and writer for SRT and WebVTT in Rust.
+A blazing fast, zero-copy subtitle parser and writer for SRT, WebVTT and ASS/SSA in Rust.
 
 [<img alt="github" src="https://img.shields.io/badge/github-findit--ai/fasrt-8da0cb?style=for-the-badge&logo=Github" height="22">][Github-url]
 <img alt="LoC" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fal8n%2F327b2a8aef9003246e45c6e47fe63937%2Fraw%2Ffasrt" height="22">
@@ -30,7 +30,7 @@ fasrt = "0.2"
 - `#![no_std]` support (with optional `alloc` and `std` features)
 - Lazy iterator-based parsing — blocks are yielded on demand
 - DFA-based lexing via [`logos`](https://docs.rs/logos) for fast tokenization
-- Strongly-typed newtypes (`Hour`, `Minute`, `Second`, `Millisecond`, `Percentage`) with compile-time validation
+- Strongly-typed newtypes (`Hour`, `Minute`, `Second`, `Millisecond`, `Centisecond`, `Percentage`) with compile-time validation
 - W3C WebVTT spec conformant — validated against [Web Platform Tests](https://github.com/nicr9/webvtt-wpt)
 
 ### SRT
@@ -61,6 +61,30 @@ fasrt = "0.2"
   - Full HTML5 named character reference support (2,231 entities via [`phf`](https://docs.rs/phf) perfect hash map)
   - Numeric (`&#32;`) and hexadecimal (`&#x20;`) character references
   - Lazy text normalization via `CueStr` with `OnceCell`-cached decoding and NULL (U+0000 → U+FFFD) replacement
+
+### ASS/SSA
+
+ASS/SSA has no formal specification; the behaviour below follows the SSA v4.00
+specification document together with the VSFilter/libass renderers.
+
+- [x] Sections (`[Script Info]`, `[V4 Styles]`, `[V4+ Styles]`, `[Events]`, `[Fonts]`, `[Graphics]`, and unknown sections verbatim)
+- [x] Timestamps (`H:MM:SS.cc`, centiseconds, unpadded and unbounded hours)
+- [x] Event rows (`Dialogue:`, `Comment:`, `Picture:`, `Sound:`, `Movie:`, `Command:`)
+- [x] `Format:`-driven field order — `EventFormat` presets for ASS v4+, SSA v4 and Matroska packets
+- [x] The `Name` (a.k.a. `Actor`) speaker column surfaced as first-class data
+- [x] `Style:` rows exposed as zero-copy fields (style *rendering* semantics are out of scope)
+- [x] `[Fonts]` / `[Graphics]` payload lines preserved verbatim, never mistaken for properties
+- [x] Strict and lossy parsing modes
+- [x] CRLF, CR, LF line endings, and BOM handling
+- [x] Writer with round-trip fidelity (`std` feature)
+- [x] Event text parsing — two-layer design, both usable standalone:
+  - **`TextParser`**: logos DFA-backed, zero-alloc token stream (`no_std`, no `alloc` needed)
+  - **`PlainText`**: clean-text extraction with `OnceCell`-cached lazy normalization, plus an allocation-free `segments()` iterator
+  - Override blocks `{…}`, with libass tag boundaries: longest-match names (`\fscx` is not `\fs` + `cx`), spaces skipped after the backslash, and argument lists ending at the first `)` (`\t(0,500,\frz360)` stays one tag)
+  - libass brace semantics: `{` opens a block only when a `}` follows, `\{` and `\}` are literal-brace escapes, so cleaning never deletes text a renderer would show
+  - `\N`, `\n` and `\h` escapes; `\p<n>` drawing mode is tokenized and skipped, never interpreted as geometry
+  - Columns a `Format:` line declares under an unrecognized name are preserved through a write, not dropped
+- [x] Standalone event parsing for embedded Matroska `S_TEXT/ASS` tracks, which arrive one event per packet with container timing authoritative
 
 ### Optional dependencies
 

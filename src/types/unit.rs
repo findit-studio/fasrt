@@ -232,10 +232,96 @@ impl Millisecond {
   }
 }
 
+/// The centisecond component (0–99) of a timestamp.
+///
+/// Centiseconds are the sub-second unit of ASS/SSA timestamps (`H:MM:SS.cc`),
+/// where the fractional part is always exactly two digits.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
+#[display("{}", self.as_str())]
+#[repr(transparent)]
+pub struct Centisecond(pub(crate) u8);
+
+impl FromStr for Centisecond {
+  type Err = ParseCentisecondError;
+
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    centisecond_from_str!(s)
+  }
+}
+
+impl Centisecond {
+  /// Create a new `Centisecond` with value 0.
+  ///
+  /// ```rust
+  /// use fasrt::types::Centisecond;
+  ///
+  /// let cs = Centisecond::new();
+  /// assert_eq!(cs.as_str(), "00");
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new() -> Self {
+    Self::with(0)
+  }
+
+  /// Create a new `Centisecond` from a `u8`.
+  ///
+  /// # Panics
+  /// Panics if the value is greater than 99.
+  ///
+  /// ```rust
+  /// use fasrt::types::Centisecond;
+  ///
+  /// let cs = Centisecond::with(50);
+  /// assert_eq!(cs.as_str(), "50");
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with(value: u8) -> Self {
+    if value > 99 {
+      panic!("Centisecond value must be between 0-99");
+    }
+    Self(value)
+  }
+
+  /// Try to create a new `Centisecond` from a `u8`, returning `None` if the
+  /// value is out of range.
+  ///
+  /// ```rust
+  /// use fasrt::types::Centisecond;
+  ///
+  /// assert_eq!(Centisecond::try_with(50), Some(Centisecond::with(50)));
+  /// assert_eq!(Centisecond::try_with(100), None);
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn try_with(value: u8) -> Option<Self> {
+    if value > 99 { None } else { Some(Self(value)) }
+  }
+
+  /// Returns the string representation of this `Centisecond`, zero-padded to
+  /// 2 digits.
+  ///
+  /// ```rust
+  /// use fasrt::types::Centisecond;
+  ///
+  /// let cs = Centisecond::with(5);
+  /// assert_eq!(cs.as_str(), "05");
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn as_str(&self) -> &'static str {
+    centisecond_to_str!(self.0)
+  }
+}
+
 #[test]
 #[should_panic]
 fn minute_panic() {
   let _ = Minute::with(60);
+}
+
+#[test]
+#[should_panic]
+fn centisecond_panic() {
+  let _ = Centisecond::with(100);
 }
 
 #[test]
