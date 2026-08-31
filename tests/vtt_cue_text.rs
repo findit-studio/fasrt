@@ -1,6 +1,8 @@
 #![cfg(any(feature = "alloc", feature = "std"))]
 
-use fasrt::vtt::cue::{CueParser, CueStr, CueText, CueToken, Node, Tag};
+use fasrt::vtt::cue::{
+  CueParser, CueStr, CueText, CueToken, DEFAULT_MAX_DEPTH, Node, Options, Tag,
+};
 
 // ── CueParser (token iterator) tests ────────────────────────────────────────
 
@@ -683,4 +685,316 @@ fn cue_text_unterminated_invalid_timestamp() {
     !tokens.iter().any(|t| matches!(t, CueToken::Timestamp(_))),
     "unterminated invalid timestamp should be rejected"
   );
+}
+
+// ── Nesting depth tests ──────────────────────────────────────────────────────
+
+/// The deepest run of nested tags in the tree.
+///
+/// Walked iteratively: these tests feed the parser payloads that would abort
+/// the test binary if anything walked the result recursively without a bound.
+fn tag_depth(tree: &CueText<'_>) -> usize {
+  let mut deepest = 0;
+  let mut work: Vec<(&Node<'_>, usize)> = tree.children().iter().map(|n| (n, 0)).collect();
+  while let Some((node, depth)) = work.pop() {
+    if let Node::Tag(tag) = node {
+      deepest = deepest.max(depth + 1);
+      work.extend(tag.children().iter().map(|child| (child, depth + 1)));
+    }
+  }
+  deepest
+}
+
+/// The tree's text in document order, with markup removed.
+fn tree_text(tree: &CueText<'_>) -> String {
+  let mut out = String::new();
+  let mut work: Vec<&Node<'_>> = tree.children().iter().rev().collect();
+  while let Some(node) = work.pop() {
+    match node {
+      Node::Text(text) => out.push_str(text.normalize()),
+      Node::Timestamp(_) => {}
+      Node::Tag(tag) => work.extend(tag.children().iter().rev()),
+    }
+  }
+  out
+}
+
+/// A cue payload nested far past anything a renderer would draw.
+///
+/// Depth 20 000 is the fixture that aborted a test binary against 0.3.0: the
+/// tree it built was walked recursively by drop glue, `Display`, `Debug`,
+/// `Clone` and `PartialEq`, and a stack overflow is an abort rather than a
+/// catchable panic. Every one of those five walks is exercised here in
+/// process, which is only safe because the tree is bounded.
+/// Skipped under Miri: interpreting 40 000 tokens costs minutes there, and an
+/// interpreter has no host stack to exhaust, so the walk this fixture is here
+/// to bound is not the walk Miri would be checking.
+#[cfg_attr(
+  miri,
+  ignore = "20 000-token fixture, and Miri cannot overflow the host stack"
+)]
+#[test]
+fn deep_nesting_is_safe_to_build_walk_and_drop() {
+  let depth = 20_000;
+  let payload = format!("{}words{}", "<i>".repeat(depth), "</i>".repeat(depth));
+
+  let tree = CueText::parse(&payload);
+
+  assert_eq!(tag_depth(&tree), DEFAULT_MAX_DEPTH);
+  assert_eq!(tree_text(&tree), "words");
+
+  let rendered = tree.to_string();
+  assert!(rendered.starts_with("<i><i>"));
+  assert!(rendered.contains("words"));
+
+  let debugged = format!("{tree:?}");
+  assert!(debugged.starts_with("CueText"));
+
+  let cloned = tree.clone();
+  assert_eq!(cloned, tree);
+
+  drop(cloned);
+  drop(tree);
+}
+
+/// Unclosed nesting is bounded too — the parser folds the open tags back into
+/// their parents at end of input, and that fold must not rebuild a deep tree.
+/// Skipped under Miri: interpreting 40 000 tokens costs minutes there, and an
+/// interpreter has no host stack to exhaust, so the walk this fixture is here
+/// to bound is not the walk Miri would be checking.
+#[cfg_attr(
+  miri,
+  ignore = "20 000-token fixture, and Miri cannot overflow the host stack"
+)]
+#[test]
+fn deep_unclosed_nesting_is_bounded() {
+  let payload = "<i>".repeat(20_000);
+  let tree = CueText::parse(&payload);
+
+  assert_eq!(tag_depth(&tree), DEFAULT_MAX_DEPTH);
+  assert_eq!(tree.children().len(), 1);
+}
+
+/// Skipped under Miri: interpreting 40 000 tokens costs minutes there, and an
+/// interpreter has no host stack to exhaust, so the walk this fixture is here
+/// to bound is not the walk Miri would be checking.
+#[cfg_attr(
+  miri,
+  ignore = "20 000-token fixture, and Miri cannot overflow the host stack"
+)]
+#[test]
+fn try_parse_refuses_deep_nesting() {
+  let err = CueText::try_parse(&"<i>".repeat(20_000)).unwrap_err();
+  assert_eq!(err.max_depth(), DEFAULT_MAX_DEPTH);
+}
+
+#[test]
+fn try_parse_accepts_input_at_the_limit() {
+  let depth = DEFAULT_MAX_DEPTH;
+  let payload = format!("{}words{}", "<i>".repeat(depth), "</i>".repeat(depth));
+
+  let tree = CueText::try_parse(&payload).expect("input at the limit is accepted");
+  assert_eq!(tag_depth(&tree), depth);
+
+  let one_deeper = format!(
+    "{}words{}",
+    "<i>".repeat(depth + 1),
+    "</i>".repeat(depth + 1)
+  );
+  assert!(CueText::try_parse(&one_deeper).is_err());
+}
+
+/// Past the limit the markup goes, the text stays.
+#[test]
+fn depth_limit_keeps_the_cue_text() {
+  let opts = Options::new().with_max_depth(1);
+  let tree = CueText::parse_with("<b>one<i>two<u>three</u></i></b>", opts);
+
+  assert_eq!(tag_depth(&tree), 1);
+  assert_eq!(tree_text(&tree), "onetwothree");
+  assert_eq!(tree.to_string(), "<b>onetwothree</b>");
+}
+
+/// An over-deep run consumes its own end tags, so the structure that follows it
+/// is the structure an unbounded parse would have produced.
+#[test]
+fn depth_limit_preserves_structure_after_the_deep_run() {
+  let opts = Options::new().with_max_depth(1);
+  let tree = CueText::parse_with("<b><i><i><i>x</i></i></i></b><u>tail</u>", opts);
+
+  assert_eq!(tree.to_string(), "<b>x</b><u>tail</u>");
+  assert_eq!(tag_depth(&tree), 1);
+}
+
+#[test]
+fn max_depth_zero_drops_every_tag() {
+  let opts = Options::new().with_max_depth(0);
+  let tree = CueText::parse_with("<b>bold</b> and <i>italic</i>", opts);
+
+  assert_eq!(tag_depth(&tree), 0);
+  assert_eq!(tree_text(&tree), "bold and italic");
+}
+
+/// `<rt>` is only legal inside `<ruby>`, and the ancestor test has to see a
+/// `<ruby>` that was itself pushed past the limit.
+#[test]
+fn ruby_ancestor_is_seen_past_the_limit() {
+  let opts = Options::new().with_max_depth(1);
+  let tree = CueText::parse_with("<b><ruby>base<rt>note</rt></ruby></b>", opts);
+
+  assert_eq!(tree_text(&tree), "basenote");
+  assert_eq!(tag_depth(&tree), 1);
+
+  // A bare <rt> with no <ruby> ancestor is still dropped, at any depth.
+  let bare = CueText::parse_with("<rt>note</rt>", opts);
+  assert_eq!(bare.children().len(), 1);
+  assert!(matches!(&bare.children()[0], Node::Text(_)));
+}
+
+/// Everything shallower than the limit parses exactly as it did before the
+/// limit existed, which a raised limit makes checkable directly.
+#[test]
+fn ordinary_cues_are_unchanged_by_the_limit() {
+  const CUES: &[&str] = &[
+    "plain text",
+    "<b>bold</b> and <i>italic</i>",
+    "<v Roger Bingham>voice</v>",
+    "<c.loud.important>classy</c>",
+    "<lang en>hello</lang>",
+    "<ruby>base<rt>note</rt></ruby>",
+    "<ruby>base<rt>one<rt>two</ruby>",
+    "<b><i><u><c>four deep</c></u></i></b>",
+    "unclosed <b>bold",
+    "stray </i> end tag",
+    "<rt>orphan rt</rt>",
+    "<00:01.000>timestamped",
+    "a&amp;b &lt;tag&gt;",
+  ];
+
+  let raised = Options::new().with_max_depth(usize::MAX);
+  for cue in CUES {
+    let bounded = CueText::parse(cue);
+    let unbounded = CueText::parse_with(cue, raised);
+    assert_eq!(bounded, unbounded, "cue: {cue:?}");
+    assert_eq!(CueText::try_parse(cue).unwrap(), unbounded, "cue: {cue:?}");
+  }
+}
+
+#[test]
+fn options_default_matches_new() {
+  assert_eq!(Options::default(), Options::new());
+  assert_eq!(Options::default().max_depth(), DEFAULT_MAX_DEPTH);
+
+  let mut opts = Options::new();
+  opts.set_max_depth(8);
+  assert_eq!(opts.max_depth(), 8);
+  assert_eq!(opts, Options::new().with_max_depth(8));
+}
+
+// ── Small-stack walk tests ───────────────────────────────────────────────────
+
+/// The stack a walk of a default-limit tree is held to.
+///
+/// Sixteen times smaller than the 2 MiB a Rust thread is given by default, and
+/// roughly two and a half times the ~50 KiB the most expensive walk actually
+/// needs in an unoptimized build — margin for other targets' frame sizes
+/// without letting a regression through.
+const SMALL_STACK: usize = 128 * 1024;
+
+/// Names the walk a re-executed child process should perform.
+const WALK_VAR: &str = "FASRT_CUE_TEXT_SMALL_STACK_WALK";
+
+/// What the child prints once it has actually completed its walk.
+const WALK_DONE: &str = "fasrt-small-stack-walk-completed";
+
+const WALKS: &[&str] = &["build", "drop", "display", "debug", "clone", "eq"];
+
+/// Every recursive walk of a tree at the default limit has to fit a small
+/// worker thread.
+///
+/// Bounding the tree is only half the fix: the bound has to be small enough
+/// that the walks it permits are affordable. A walk that overflows aborts, and
+/// an abort would take the test binary with it, so each walk runs in a child
+/// process — this same test, re-executed with the walk named in the
+/// environment — on a thread with an explicitly small stack. The parent only
+/// has to see the child exit cleanly.
+#[cfg_attr(miri, ignore = "spawns child processes")]
+#[test]
+fn every_walk_at_the_default_limit_fits_a_small_stack() {
+  if let Ok(walk) = std::env::var(WALK_VAR) {
+    run_walk_on_small_stack(&walk);
+    // The parent matches on this. A filter that selects no test still exits
+    // zero, so without a witness on stdout a renamed test would leave the
+    // parent asserting nothing at all.
+    println!("{WALK_DONE} {walk}");
+    return;
+  }
+
+  let exe = std::env::current_exe().expect("test binary path");
+  for walk in WALKS {
+    let output = std::process::Command::new(&exe)
+      .args([
+        "--exact",
+        "every_walk_at_the_default_limit_fits_a_small_stack",
+        "--nocapture",
+      ])
+      .env(WALK_VAR, walk)
+      .output()
+      .expect("re-exec the test binary");
+
+    assert!(
+      output.status.success(),
+      "the {walk} walk of a tree at DEFAULT_MAX_DEPTH ({DEFAULT_MAX_DEPTH}) did not \
+       survive a {SMALL_STACK}-byte stack: {}",
+      output.status
+    );
+    assert!(
+      String::from_utf8_lossy(&output.stdout).contains(&format!("{WALK_DONE} {walk}")),
+      "the child never reported running the {walk} walk; stdout was:\n{}",
+      String::from_utf8_lossy(&output.stdout)
+    );
+  }
+}
+
+fn run_walk_on_small_stack(walk: &str) {
+  let depth = DEFAULT_MAX_DEPTH;
+  let payload = format!("{}words{}", "<i>".repeat(depth), "</i>".repeat(depth));
+  let walk = walk.to_owned();
+
+  std::thread::Builder::new()
+    .stack_size(SMALL_STACK)
+    .spawn(move || {
+      let tree = CueText::parse(&payload);
+      assert_eq!(tag_depth(&tree), depth);
+
+      match walk.as_str() {
+        // Construction is done; keeping the tree alive isolates it from drop.
+        "build" => std::mem::forget(tree),
+        "drop" => drop(tree),
+        "display" => {
+          assert!(tree.to_string().contains("words"));
+          std::mem::forget(tree);
+        }
+        "debug" => {
+          assert!(format!("{tree:?}").starts_with("CueText"));
+          std::mem::forget(tree);
+        }
+        "clone" => {
+          let cloned = tree.clone();
+          assert_eq!(tag_depth(&cloned), depth);
+          std::mem::forget(cloned);
+          std::mem::forget(tree);
+        }
+        "eq" => {
+          let cloned = tree.clone();
+          assert!(cloned == tree);
+          std::mem::forget(cloned);
+          std::mem::forget(tree);
+        }
+        other => panic!("unknown walk {other}"),
+      }
+    })
+    .expect("spawn a small-stack thread")
+    .join()
+    .expect("the walk must not unwind");
 }

@@ -134,6 +134,50 @@ pub enum TimestampError {
   InvalidDigits,
 }
 
+/// The error returned when cue text nests deeper than the configured limit.
+///
+/// WebVTT places no bound on how deeply a cue payload may nest, and the depth
+/// is chosen by the file rather than by the caller. A tree is walked
+/// recursively by [`Clone`], [`PartialEq`], [`core::fmt::Debug`],
+/// [`core::fmt::Display`] and by the compiler's own drop glue, so an unbounded
+/// tree lets a hostile cue overflow the stack — an abort, which no caller can
+/// catch. [`CueText::try_parse`] refuses such input instead.
+///
+/// [`CueText::try_parse`]: crate::vtt::cue::CueText::try_parse
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+#[error("cue text nests deeper than the maximum depth of {max_depth}")]
+pub struct MaxDepthExceededError {
+  max_depth: usize,
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+impl MaxDepthExceededError {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) const fn new(max_depth: usize) -> Self {
+    Self { max_depth }
+  }
+
+  /// Returns the maximum depth that the input exceeded.
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::{CueText, Options};
+  ///
+  /// let deep = "<i>".repeat(4);
+  /// let err = CueText::try_parse_with(&deep, Options::new().with_max_depth(2))
+  ///   .unwrap_err();
+  /// assert_eq!(err.max_depth(), 2);
+  /// # }
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn max_depth(&self) -> usize {
+    self.max_depth
+  }
+}
+
 /// The error type for parsing index numbers of subtitles.
 #[derive(Debug, Clone, PartialEq, Eq, IsVariant, Unwrap, TryUnwrap, thiserror::Error)]
 #[unwrap(ref, ref_mut)]
