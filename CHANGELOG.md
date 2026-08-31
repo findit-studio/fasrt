@@ -1,5 +1,7 @@
 # UNRELEASED
 
+# [0.3.0](https://github.com/findit-studio/fasrt/releases/tag/v0.3.0) (August 31st, 2026)
+
 FEATURES
 
 - Add ASS/SSA support in a new `ass` module, on the same two-layer shape as
@@ -39,6 +41,20 @@ FEATURES
     emitted in the declared field order.
 - Add `types::Centisecond`, the sub-second unit of ASS/SSA timestamps, and its
   `error::ParseCentisecondError`.
+
+CHANGED
+
+- **MSRV raised `1.85` → `1.95`.** Internal control flow in `ass` and `vtt`
+  now uses stable let-chains and `Vec::pop_if`.
+- **`phf` and `phf_codegen` floors raised `0.13` → `0.14`.** Both are
+  internal: `phf` backs the crate-private HTML5 entity lookup table and
+  `phf_codegen` only regenerates it at build time, so the public API is
+  unchanged.
+
+INTERNAL
+
+- Stable-clippy `-D warnings` lint fixes across `vtt`/`ass` control flow and
+  the benches; no public API or behavior change.
 
 # 0.1.2 (January 6th, 2022)
 

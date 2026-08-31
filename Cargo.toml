@@ -1,9 +1,9 @@
 [package]
 name = "fasrt"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
-repository = "https://github.com/Findit-AI/fasrt"
-homepage = "https://github.com/Findit-AI/fasrt"
+repository = "https://github.com/findit-studio/fasrt"
+homepage = "https://github.com/findit-studio/fasrt"
 documentation = "https://docs.rs/fasrt"
 description = "A blazing fast, zero-copy subtitle parser and writer for SRT and WebVTT in Rust."
 license = "MIT OR Apache-2.0"
