@@ -48,11 +48,11 @@ fn load_all_vtt_fixtures() -> String {
       let mut entries: Vec<_> = read_dir.filter_map(Result::ok).collect();
       entries.sort_by_key(|a| a.file_name());
       for entry in entries {
-        if entry.path().extension().is_some_and(|e| e == "vtt") {
-          if let Ok(contents) = std::fs::read_to_string(entry.path()) {
-            buf.push_str(&contents);
-            buf.push_str("\n\n");
-          }
+        if entry.path().extension().is_some_and(|e| e == "vtt")
+          && let Ok(contents) = std::fs::read_to_string(entry.path())
+        {
+          buf.push_str(&contents);
+          buf.push_str("\n\n");
         }
       }
     }

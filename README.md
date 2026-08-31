@@ -21,7 +21,7 @@ A blazing fast, zero-copy subtitle parser and writer for SRT, WebVTT and ASS/SSA
 
 ```toml
 [dependencies]
-fasrt = "0.2"
+fasrt = "0.3"
 ```
 
 ## Features
