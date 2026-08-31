@@ -481,15 +481,15 @@ impl<'a> Iterator for Parser<'a> {
       // U+0021..=U+0061, so a payload line can legitimately begin with `;` or
       // contain `:`. Only the exact lowercase header libass looks for is
       // treated as a property.
-      if let Some(section) = self.section {
-        if section.is_resource() {
-          let header = match section {
-            Section::Fonts => "fontname:",
-            _ => "filename:",
-          };
-          if !line.starts_with(header) {
-            return Some(Ok(Block::Data(raw_line)));
-          }
+      if let Some(section) = self.section
+        && section.is_resource()
+      {
+        let header = match section {
+          Section::Fonts => "fontname:",
+          _ => "filename:",
+        };
+        if !line.starts_with(header) {
+          return Some(Ok(Block::Data(raw_line)));
         }
       }
 
@@ -529,17 +529,17 @@ impl<'a> Iterator for Parser<'a> {
         return Some(Ok(Block::Style(StyleRow::new(value))));
       }
 
-      if self.section == Some(Section::Events) {
-        if let Some(kind) = EventKind::new(key) {
-          let format = match self.resolve_event_format() {
-            Ok(format) => format,
-            Err(error) => return self.fail(error),
-          };
-          return match Event::parse_fields_with(kind, value, &format, &self.options) {
-            Ok(event) => Some(Ok(Block::Event(event))),
-            Err(error) => self.fail(error),
-          };
-        }
+      if self.section == Some(Section::Events)
+        && let Some(kind) = EventKind::new(key)
+      {
+        let format = match self.resolve_event_format() {
+          Ok(format) => format,
+          Err(error) => return self.fail(error),
+        };
+        return match Event::parse_fields_with(kind, value, &format, &self.options) {
+          Ok(event) => Some(Ok(Block::Event(event))),
+          Err(error) => self.fail(error),
+        };
       }
 
       return Some(Ok(Block::Property(Property::new(key, value))));

@@ -774,8 +774,7 @@ impl<'a> CueText<'a> {
           }
 
           // 3. If current node matches, pop it
-          if stack.last().is_some_and(|n| n.tag() == tag) {
-            let node = stack.pop().unwrap();
+          if let Some(node) = stack.pop_if(|n| n.tag() == tag) {
             let target = stack
               .last_mut()
               .map_or(&mut root_children, |p| p.children_mut());
