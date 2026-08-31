@@ -4,5 +4,7 @@ include!("../../generated/minute_to_str.rs");
 include!("../../generated/second_to_str.rs");
 include!("../../generated/millisecond_from_str.rs");
 include!("../../generated/millisecond_to_str.rs");
+include!("../../generated/centisecond_from_str.rs");
+include!("../../generated/centisecond_to_str.rs");
 include!("../../generated/hour_from_str.rs");
 include!("../../generated/hour_to_str.rs");

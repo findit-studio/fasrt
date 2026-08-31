@@ -1,0 +1,23 @@
+[Script Info]
+; This is a Sub Station Alpha v4 script.
+Title: Legacy SSA sample
+Original Script: fixture
+ScriptType: v4.00
+Collisions: Normal
+PlayResX: 640
+PlayResY: 480
+PlayDepth: 0
+Timer: 100.0000
+
+[V4 Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, TertiaryColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, AlphaLevel, Encoding
+Style: Default,Arial,20,65535,65535,65535,-2147483640,-1,0,1,2,1,2,30,30,30,0,0
+Style: Narration,Times New Roman,18,16777215,16777215,16777215,-2147483640,0,-1,1,1,0,2,30,30,30,0,0
+
+[Events]
+Format: Marked, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: Marked=0,0:00:00.50,0:00:03.00,Default,Kaji,0000,0000,0000,,Is this thing recording?
+Dialogue: Marked=0,0:00:03.10,0:00:06.20,Default,Misato,0000,0000,0000,,It has been for ten minutes.
+Dialogue: Marked=0,0:00:06.30,0:00:09.90,Narration,,0000,0000,0000,,{\i1}Neither of them noticed the light.{\i0}
+Dialogue: Marked=0,0:00:10.00,0:00:13.40,Default,Kaji,0000,0000,0000,,Then you should have said something.
+Comment: Marked=0,0:00:13.50,0:00:13.50,Default,,0000,0000,0000,,timing check needed here

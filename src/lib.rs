@@ -1,4 +1,5 @@
-//! A blazing fast, zero-copy subtitle parser and writer for SRT and WebVTT in Rust.
+//! A blazing fast, zero-copy subtitle parser and writer for SRT, WebVTT and
+//! ASS/SSA in Rust.
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
@@ -10,6 +11,9 @@ extern crate alloc as std;
 
 #[cfg(feature = "std")]
 extern crate std;
+
+/// ASS/SSA subtitle parser and writer.
+pub mod ass;
 
 /// SRT subtitle parser.
 pub mod srt;
