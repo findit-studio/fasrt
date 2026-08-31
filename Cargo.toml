@@ -7,7 +7,7 @@ homepage = "https://github.com/Findit-AI/fasrt"
 documentation = "https://docs.rs/fasrt"
 description = "A blazing fast, zero-copy subtitle parser and writer for SRT and WebVTT in Rust."
 license = "MIT OR Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.95"
 keywords = ["subtitle", "srt", "webvtt", "vtt"]
 categories = ["parser-implementations", "parsing", "multimedia", "no-std::no-alloc", "encoding"]
 
