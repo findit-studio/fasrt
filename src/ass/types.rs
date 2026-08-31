@@ -1025,10 +1025,10 @@ impl EventFormat {
     }
     let mut slot = 0;
     while slot < 12 {
-      if let Some(declared) = self.slots[slot] {
-        if declared as usize == index {
-          return Some(EventField::ALL[slot]);
-        }
+      if let Some(declared) = self.slots[slot]
+        && declared as usize == index
+      {
+        return Some(EventField::ALL[slot]);
       }
       slot += 1;
     }

@@ -1157,11 +1157,11 @@ const _: () = {
       }
       self.has_written_signature = true;
       self.inner.write_all(b"WEBVTT")?;
-      if let Some(text) = header_text {
-        if !text.is_empty() {
-          self.inner.write_all(b" ")?;
-          self.inner.write_all(text.as_bytes())?;
-        }
+      if let Some(text) = header_text
+        && !text.is_empty()
+      {
+        self.inner.write_all(b" ")?;
+        self.inner.write_all(text.as_bytes())?;
       }
       self.inner.write_all(b"\n")
     }
