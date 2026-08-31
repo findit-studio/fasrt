@@ -64,7 +64,7 @@ impl<const N: usize> Buffer<N> {
   const fn write_bytes(&mut self, bytes: &[u8]) {
     let len = self.len();
     let src_len = bytes.len();
-    assert!(len + src_len <= N - 1, "buffer overflow");
+    assert!(len + src_len < N, "buffer overflow");
     unsafe {
       core::ptr::copy_nonoverlapping(
         bytes.as_ptr(),

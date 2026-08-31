@@ -456,10 +456,8 @@ fn parse_region_settings<'a>(body: &'a str) -> Region<'a> {
           region.set_viewport_anchor(anchor);
         }
       }
-      "scroll" => {
-        if value == "up" {
-          region.set_scroll(Scroll::Up);
-        }
+      "scroll" if value == "up" => {
+        region.set_scroll(Scroll::Up);
       }
       _ => {}
     }

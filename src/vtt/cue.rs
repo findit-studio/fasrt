@@ -637,12 +637,10 @@ fn try_parse_unterminated<'a>(slice: &'a str) -> Option<CueToken<'a>> {
         return None;
       }
     }
-    _ if inner.starts_with("lang") => {
-      if inner.len() == 4 || matches!(inner.as_bytes()[4], b'.' | b' ' | b'\t') {
-        (Tag::Lang, 4)
-      } else {
-        return None;
-      }
+    _ if inner.starts_with("lang")
+      && (inner.len() == 4 || matches!(inner.as_bytes()[4], b'.' | b' ' | b'\t')) =>
+    {
+      (Tag::Lang, 4)
     }
     _ => return None,
   };
