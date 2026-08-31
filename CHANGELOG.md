@@ -1,5 +1,40 @@
 # UNRELEASED
 
+FIXED
+
+- **Deeply nested cue text no longer aborts the process.**
+  `vtt::cue::CueText::parse` now bounds the tree it builds at
+  `vtt::cue::DEFAULT_MAX_DEPTH` (16). WebVTT places no limit on cue payload
+  nesting and the depth is chosen by the file, so a corrupt or hostile cue —
+  a few thousand nested `<i>` in an embedded `S_TEXT/WEBVTT` packet, say —
+  used to build a tree that the recursive walks over it could not survive:
+  the compiler's drop glue, `Display`, `Debug`, `Clone` and `PartialEq`. A
+  stack overflow is an `abort`, not a catchable panic, so it took down the
+  whole process. Measured against 0.3.0 on a 2 MiB stack (debug,
+  `aarch64-apple-darwin`), `Display` aborted from ~470 levels, `Clone` and
+  `PartialEq` from ~1 600, `Debug` from ~1 800 and drop from ~7 700; tree
+  *construction* was already iterative and survived 20 000.
+
+  The default is chosen from both ends: it is five times the deepest cue in
+  the crate's whole fixture corpus (107 264 cue bodies nest three deep) and
+  twice WebVTT's entire eight-tag vocabulary, while keeping the most expensive
+  walk — `Display`, at roughly 3.7 KiB of stack per level unoptimized — inside
+  a 128 KiB thread, a sixteenth of the stack a Rust thread is given by
+  default. Cue text within the limit parses exactly as it did before.
+
+FEATURES
+
+- Add `vtt::cue::Options`, carrying the cue text `max_depth` bound, and
+  `vtt::cue::DEFAULT_MAX_DEPTH`.
+- Add `vtt::cue::CueText::parse_with`, which parses under given `Options`.
+  Markup nested past the limit is dropped exactly as an unrecognized tag
+  already is: the text is kept and the matching end tag is still consumed, so
+  the structure following an over-deep run is the structure an unbounded parse
+  would have produced.
+- Add `vtt::cue::CueText::try_parse` and `try_parse_with`, which refuse
+  over-deep input with the new `error::MaxDepthExceededError` instead of
+  flattening it.
+
 # [0.3.0](https://github.com/findit-studio/fasrt/releases/tag/v0.3.0) (August 31st, 2026)
 
 FEATURES

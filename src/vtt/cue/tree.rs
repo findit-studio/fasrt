@@ -4,6 +4,9 @@ use derive_more::{TryUnwrap, Unwrap};
 use super::*;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
+use crate::error::MaxDepthExceededError;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
 use crate::vtt::Timestamp;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
@@ -532,11 +535,148 @@ impl<'a, C: AsRef<[Node<'a>]>> fmt::Display for TagNode<'a, C> {
   }
 }
 
+/// The maximum cue text nesting depth [`CueText::parse`] accepts by default.
+///
+/// WebVTT places no bound on how deeply a cue payload may nest, and the depth
+/// is chosen by the file rather than by the caller. A tree is walked
+/// recursively by [`Clone`], [`PartialEq`], [`fmt::Debug`], [`fmt::Display`]
+/// and by the compiler's own drop glue, so an unbounded tree lets a hostile
+/// cue overflow the stack — an abort, which no caller can catch. Bounding the
+/// tree bounds every one of those walks at once.
+///
+/// The value is chosen from both ends. It is far above what the format uses:
+/// WebVTT's whole tag vocabulary (`<v>`, `<lang>`, `<c>`, `<b>`, `<i>`, `<u>`,
+/// `<ruby>`, `<rt>`) is eight tags, and the deepest cue in this crate's entire
+/// fixture corpus — 107 264 cue bodies, WPT and real-world — nests three deep.
+/// And it is far below what a small thread can pay: at this depth the most
+/// expensive walk needs roughly 50 KiB of stack in an *unoptimized* build
+/// (measured on `aarch64-apple-darwin`; optimized builds cost far less), which
+/// the regression suite holds to a 128 KiB thread — a sixteenth of the 2 MiB a
+/// Rust thread is given by default.
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
+pub const DEFAULT_MAX_DEPTH: usize = 16;
+
+/// Options that control how raw cue text is turned into a [`CueText`] tree.
+///
+/// ```rust
+/// # #[cfg(any(feature = "alloc", feature = "std"))]
+/// # {
+/// use fasrt::vtt::cue::{DEFAULT_MAX_DEPTH, Options};
+///
+/// assert_eq!(Options::new().max_depth(), DEFAULT_MAX_DEPTH);
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
+pub struct Options {
+  /// The deepest the parsed tree may nest.
+  max_depth: usize,
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
+impl Options {
+  /// The default options, bounding nesting at [`DEFAULT_MAX_DEPTH`].
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::{DEFAULT_MAX_DEPTH, Options};
+  ///
+  /// assert_eq!(Options::new().max_depth(), DEFAULT_MAX_DEPTH);
+  /// # }
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new() -> Self {
+    Self {
+      max_depth: DEFAULT_MAX_DEPTH,
+    }
+  }
+
+  /// Returns the deepest the parsed tree may nest.
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::Options;
+  ///
+  /// assert_eq!(Options::new().with_max_depth(8).max_depth(), 8);
+  /// # }
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn max_depth(&self) -> usize {
+    self.max_depth
+  }
+
+  /// Sets the deepest the parsed tree may nest (builder pattern).
+  ///
+  /// `0` keeps the text and drops every tag.
+  ///
+  /// Raising the limit raises the stack every recursive walk of the tree
+  /// costs, and a walk that overflows the stack is an abort no caller can
+  /// catch — so the limit is a stack budget, not a taste. Per level of depth,
+  /// in an unoptimized build on `aarch64-apple-darwin`: [`fmt::Display`] about
+  /// 3.7 KiB, [`fmt::Debug`], [`Clone`] and [`PartialEq`] about 1 KiB each,
+  /// and construction and drop under a tenth of that. Optimized builds cost
+  /// far less. Multiply by the stack the thinnest thread that will touch the
+  /// tree is given, and leave room for the caller's own frames.
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::Options;
+  ///
+  /// let opts = Options::new().with_max_depth(4);
+  /// assert_eq!(opts.max_depth(), 4);
+  /// # }
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with_max_depth(mut self, max_depth: usize) -> Self {
+    self.max_depth = max_depth;
+    self
+  }
+
+  /// Sets the deepest the parsed tree may nest.
+  ///
+  /// See [`with_max_depth`](Self::with_max_depth) for the cost of raising it.
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::Options;
+  ///
+  /// let mut opts = Options::new();
+  /// opts.set_max_depth(4);
+  /// assert_eq!(opts.max_depth(), 4);
+  /// # }
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn set_max_depth(&mut self, max_depth: usize) -> &mut Self {
+    self.max_depth = max_depth;
+    self
+  }
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+impl Default for Options {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 /// A WebVTT cue text DOM tree, generic over its children container.
 ///
 /// The default container is `Vec<Node<'a>>`, returned by [`parse`].
 /// For allocation-free writing you can use `[Node; N]` or `&[Node]`
 /// instead.
+///
+/// A tree returned by [`parse`] nests no deeper than
+/// [`Options::max_depth`], so walking it recursively — as [`Clone`],
+/// [`PartialEq`], [`fmt::Debug`], [`fmt::Display`] and the drop glue all do —
+/// costs bounded stack. A tree assembled by hand carries no such bound.
 ///
 /// [`parse`]: CueText::parse
 ///
@@ -706,7 +846,8 @@ impl<'a, C> CueText<'a, C> {
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
 impl<'a> CueText<'a> {
-  /// Parse raw cue text into a DOM tree.
+  /// Parse raw cue text into a DOM tree, bounding nesting at
+  /// [`DEFAULT_MAX_DEPTH`].
   ///
   /// ```rust
   /// # #[cfg(any(feature = "alloc", feature = "std"))]
@@ -719,86 +860,250 @@ impl<'a> CueText<'a> {
   /// assert!(matches!(&tree.children()[1], Node::Text(t) if t.normalize() == " world"));
   /// # }
   /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn parse(input: &'a str) -> Self {
-    let mut root_children = Vec::new();
-    let mut stack: Vec<TagNode<'a>> = Vec::new();
+    Self::parse_with(input, Options::new())
+  }
+
+  /// Parse raw cue text into a DOM tree with the given options.
+  ///
+  /// Markup nested past [`Options::max_depth`] is dropped: the tag itself is
+  /// discarded, exactly as an unrecognized tag already is, while its text is
+  /// kept and its end tag is still consumed — so the cue's text is complete
+  /// and the structure that follows the over-deep run is the structure an
+  /// unbounded parse would have produced. Use [`try_parse_with`] to be told
+  /// that the input was that deep instead.
+  ///
+  /// [`try_parse_with`]: CueText::try_parse_with
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::{CueText, Options};
+  ///
+  /// let tree = CueText::parse_with("<b><i>deep</i></b>", Options::new().with_max_depth(1));
+  /// // `<b>` fits; `<i>` does not, so only its text survives.
+  /// assert_eq!(tree.to_string(), "<b>deep</b>");
+  /// # }
+  /// ```
+  pub fn parse_with(input: &'a str, options: Options) -> Self {
+    Self::build(input, options.max_depth(), false).0
+  }
+
+  /// Parse raw cue text into a DOM tree, refusing input that nests deeper than
+  /// [`DEFAULT_MAX_DEPTH`].
+  ///
+  /// # Errors
+  ///
+  /// Returns [`MaxDepthExceededError`] when the input nests deeper than the
+  /// limit.
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::CueText;
+  ///
+  /// assert!(CueText::try_parse("<b>hello</b>").is_ok());
+  /// assert!(CueText::try_parse(&"<i>".repeat(20_000)).is_err());
+  /// # }
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn try_parse(input: &'a str) -> Result<Self, MaxDepthExceededError> {
+    Self::try_parse_with(input, Options::new())
+  }
+
+  /// Parse raw cue text into a DOM tree with the given options, refusing input
+  /// that nests deeper than [`Options::max_depth`].
+  ///
+  /// # Errors
+  ///
+  /// Returns [`MaxDepthExceededError`] when the input nests deeper than the
+  /// limit.
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::{CueText, Options};
+  ///
+  /// let opts = Options::new().with_max_depth(1);
+  /// assert!(CueText::try_parse_with("<b>hello</b>", opts).is_ok());
+  ///
+  /// let err = CueText::try_parse_with("<b><i>deep</i></b>", opts).unwrap_err();
+  /// assert_eq!(err.max_depth(), 1);
+  /// # }
+  /// ```
+  pub fn try_parse_with(input: &'a str, options: Options) -> Result<Self, MaxDepthExceededError> {
+    match Self::build(input, options.max_depth(), true) {
+      (tree, false) => Ok(tree),
+      (_, true) => Err(MaxDepthExceededError::new(options.max_depth())),
+    }
+  }
+
+  /// Builds the tree, reporting alongside it whether `max_depth` was exceeded.
+  ///
+  /// With `stop_when_exceeded` the walk returns at the first tag past the
+  /// limit, so a caller that is about to refuse the input does no work beyond
+  /// it; the partial tree it returns is meant to be discarded.
+  fn build(input: &'a str, max_depth: usize, stop_when_exceeded: bool) -> (Self, bool) {
+    let mut builder = Builder::new(max_depth);
+    let mut exceeded = false;
 
     for token in CueParser::new(input) {
       match token {
-        CueToken::Text(text) => {
-          let node = Node::Text(text);
-          if let Some(parent) = stack.last_mut() {
-            parent.children_mut().push(node);
-          } else {
-            root_children.push(node);
-          }
-        }
-        CueToken::Timestamp(ts) => {
-          let node = Node::Timestamp(ts);
-          if let Some(parent) = stack.last_mut() {
-            parent.children_mut().push(node);
-          } else {
-            root_children.push(node);
-          }
-        }
+        CueToken::Text(text) => builder.push_leaf(Node::Text(text)),
+        CueToken::Timestamp(ts) => builder.push_leaf(Node::Timestamp(ts)),
         CueToken::StartTag {
           tag,
           classes,
           annotation,
         } => {
           // Per spec: <rt> is only allowed inside <ruby>
-          if tag == Tag::RubyText && !stack.iter().any(|n| n.tag() == Tag::Ruby) {
+          if tag == Tag::RubyText && !builder.in_ruby() {
             continue;
           }
-          stack.push(
-            TagNode::new(tag)
-              .with_classes(classes)
-              .with_annotation(annotation),
-          );
+          if !builder.open(tag, classes, annotation) {
+            exceeded = true;
+            if stop_when_exceeded {
+              break;
+            }
+          }
         }
         CueToken::EndTag(tag) => {
           // W3C WebVTT spec §6.4 end tag processing:
 
           // 1. </rt> requires a <ruby> ancestor
-          if tag == Tag::RubyText && !stack.iter().any(|n| n.tag() == Tag::Ruby) {
+          if tag == Tag::RubyText && !builder.in_ruby() {
             continue;
           }
 
           // 2. Generate implied end tags: while top of stack is <rt>, close it
-          while stack.last().is_some_and(|n| n.tag() == Tag::RubyText) {
-            let rt = stack.pop().unwrap();
-            let target = stack
-              .last_mut()
-              .map_or(&mut root_children, |p| p.children_mut());
-            target.push(Node::Tag(rt));
+          while builder.current_tag() == Some(Tag::RubyText) {
+            builder.close_current();
           }
 
           // 3. If current node matches, pop it
-          if let Some(node) = stack.pop_if(|n| n.tag() == tag) {
-            let target = stack
-              .last_mut()
-              .map_or(&mut root_children, |p| p.children_mut());
-            target.push(Node::Tag(node));
+          if builder.current_tag() == Some(tag) {
+            builder.close_current();
           }
           // Otherwise: end tag is ignored (spec says jump to next token)
         }
       }
     }
 
-    // Any unclosed tags become root children (fold into parents)
-    while let Some(node) = stack.pop() {
-      let completed = Node::Tag(node);
-      if let Some(parent) = stack.last_mut() {
-        parent.children_mut().push(completed);
-      } else {
-        root_children.push(completed);
-      }
+    (Self::new(builder.finish()), exceeded)
+  }
+}
+
+/// The working state of [`CueText::build`].
+///
+/// `stack` holds the ancestors that are materialized as [`TagNode`]s, and
+/// never grows past `max_depth`. `over` holds the ancestors past that limit
+/// as names only: their markup is dropped, but end-tag matching still sees the
+/// nesting the input declared, so the algorithm below stays the W3C one and
+/// only the deepest markup goes missing.
+///
+/// While `over` is non-empty the innermost *materialized* node is
+/// `stack.last_mut()`, which is where text keeps landing — so an over-deep run
+/// costs O(1) per token rather than splicing children up the tree.
+#[cfg(any(feature = "alloc", feature = "std"))]
+struct Builder<'a> {
+  root: Vec<Node<'a>>,
+  stack: Vec<TagNode<'a>>,
+  over: Vec<Tag>,
+  /// The number of open `<ruby>` ancestors across both stacks — the O(1) form
+  /// of the spec's "has a `<ruby>` ancestor" test.
+  ///
+  /// Every push through [`open`](Self::open) that increments this is matched
+  /// by exactly one pop through [`close_current`](Self::close_current) that
+  /// decrements it, so the count cannot go below zero.
+  ruby_depth: usize,
+  max_depth: usize,
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+impl<'a> Builder<'a> {
+  fn new(max_depth: usize) -> Self {
+    Self {
+      root: Vec::new(),
+      stack: Vec::new(),
+      over: Vec::new(),
+      ruby_depth: 0,
+      max_depth,
+    }
+  }
+
+  /// The innermost open tag, or `None` at the root.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn current_tag(&self) -> Option<Tag> {
+    match self.over.last() {
+      Some(tag) => Some(*tag),
+      None => self.stack.last().map(|node| node.tag()),
+    }
+  }
+
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn in_ruby(&self) -> bool {
+    self.ruby_depth > 0
+  }
+
+  /// Appends a leaf to the innermost materialized node.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn push_leaf(&mut self, node: Node<'a>) {
+    match self.stack.last_mut() {
+      Some(parent) => parent.children_mut().push(node),
+      None => self.root.push(node),
+    }
+  }
+
+  /// Opens a tag. Returns `false` when it lands past `max_depth`, in which
+  /// case only its name is kept and no node is materialized for it.
+  fn open(&mut self, tag: Tag, classes: &'a str, annotation: Option<&'a str>) -> bool {
+    if tag == Tag::Ruby {
+      self.ruby_depth += 1;
     }
 
-    Self {
-      children: root_children,
-      _marker: core::marker::PhantomData,
+    if self.over.is_empty() && self.stack.len() < self.max_depth {
+      self.stack.push(
+        TagNode::new(tag)
+          .with_classes(classes)
+          .with_annotation(annotation),
+      );
+      true
+    } else {
+      self.over.push(tag);
+      false
     }
+  }
+
+  /// Closes the innermost open tag, attaching its node to its parent. An
+  /// over-deep tag has no node to attach: its children were appended to the
+  /// innermost materialized node as they arrived, and stay there.
+  fn close_current(&mut self) {
+    let tag = match self.over.pop() {
+      Some(tag) => tag,
+      None => {
+        let Some(node) = self.stack.pop() else { return };
+        let tag = node.tag();
+        self.push_leaf(Node::Tag(node));
+        tag
+      }
+    };
+
+    if tag == Tag::Ruby {
+      self.ruby_depth -= 1;
+    }
+  }
+
+  /// Folds every still-open tag into its parent and returns the root children.
+  fn finish(mut self) -> Vec<Node<'a>> {
+    while let Some(node) = self.stack.pop() {
+      let completed = Node::Tag(node);
+      match self.stack.last_mut() {
+        Some(parent) => parent.children_mut().push(completed),
+        None => self.root.push(completed),
+      }
+    }
+    self.root
   }
 }
 
