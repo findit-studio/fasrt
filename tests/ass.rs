@@ -2,9 +2,14 @@
 
 use fasrt::ass::{
   Block, Event, EventField, EventFormat, EventKind, Options, ParseAssError, Parser, Property,
-  Section, Timestamp, Writer,
+  Section, Timestamp,
 };
 use fasrt::types::{Centisecond, Minute, Second};
+
+// `ass::Writer` exists only with `std`, so the cases that exercise it are gated
+// to match. Everything else in this file runs on every feature tier.
+#[cfg(feature = "std")]
+use fasrt::ass::Writer;
 
 /// Loads a fixture from `fixtures/ass/`.
 fn fixture(name: &str) -> String {
@@ -25,6 +30,7 @@ const VALID_FIXTURES: &[&str] = &[
 
 /// Fixtures written in the canonical form the writer emits, so that
 /// parse → write reproduces the input byte for byte.
+#[cfg(feature = "std")]
 const CANONICAL_FIXTURES: &[&str] = &[
   "aegisub_dialogue.ass",
   "typesetting.ass",
@@ -334,6 +340,9 @@ fn an_empty_format_cannot_parse_a_row() {
 
 // ── Matroska packets: layer 2 standalone ───────────────────────────────────
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn matroska_packet_parses_without_a_document() {
   // Exactly the payload Matroska carries for S_TEXT/ASS: no `Dialogue:`
@@ -574,6 +583,9 @@ fn every_valid_fixture_parses_in_strict_mode() {
   }
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn aegisub_fixture_yields_the_expected_events() {
   let script = fixture("aegisub_dialogue.ass");
@@ -639,6 +651,9 @@ fn ssa_fixture_carries_marked_instead_of_layer() {
   assert_eq!(events[0].margin_l(), Some(0));
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn karaoke_fixture_cleans_to_lyrics() {
   let script = fixture("karaoke.ass");
@@ -648,6 +663,9 @@ fn karaoke_fixture_cleans_to_lyrics() {
   assert_eq!(events[5].plain_text().normalize(), "君の声が");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn typesetting_fixture_skips_drawings_and_keeps_words() {
   let script = fixture("typesetting.ass");
@@ -675,6 +693,9 @@ fn typesetting_fixture_skips_drawings_and_keeps_words() {
   assert_eq!(commas.text(), "Commas, semicolons; and colons: all fine",);
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn crlf_fixture_parses_and_strips_the_bom() {
   let script = fixture("crlf_bom.ass");
@@ -689,6 +710,7 @@ fn crlf_fixture_parses_and_strips_the_bom() {
 
 // ── Writer ─────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "std")]
 #[test]
 fn canonical_fixtures_round_trip_byte_for_byte() {
   for name in CANONICAL_FIXTURES {
@@ -706,6 +728,7 @@ fn canonical_fixtures_round_trip_byte_for_byte() {
   }
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn writing_is_idempotent_for_every_valid_fixture() {
   // The writer emits a canonical form, so the first write may normalize
@@ -805,6 +828,7 @@ fn a_section_header_still_ends_a_resource_section() {
   assert_eq!(parsed[3], Block::Section(Section::Events));
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn writer_follows_the_declared_field_order() {
   // A format that omits margins and reorders the leading columns.
@@ -820,6 +844,7 @@ Dialogue: 0:00:01.00,0:00:03.00,Rin,Default,Hello
   assert_eq!(String::from_utf8(buf).unwrap(), script);
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn writer_emits_empty_columns_for_absent_fields() {
   let event = Event::new(EventKind::Dialogue, "Hi").with_style(Some("Default"));
@@ -832,6 +857,7 @@ fn writer_emits_empty_columns_for_absent_fields() {
   );
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn unknown_format_columns_survive_a_round_trip() {
   // A `Format:` line may declare vendor or future columns. Their values must
@@ -881,6 +907,7 @@ fn event_equality_covers_unknown_column_data() {
   assert_eq!(a, same);
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn a_second_events_section_does_not_inherit_the_first_format() {
   // The parser resets its field order on entering `[Events]`, so the writer
@@ -909,6 +936,7 @@ Dialogue: 0,0:00:04.00,0:00:06.00,Default,B,0,0,0,,second
   );
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn writer_normalizes_padded_margins() {
   let script = "\
@@ -927,6 +955,7 @@ Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0000,0000,0000,,x
   );
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn writer_separates_sections_with_a_blank_line() {
   let script = "[Script Info]\nTitle: X\n\n[Events]\nFormat: Text\n";
@@ -937,6 +966,7 @@ fn writer_separates_sections_with_a_blank_line() {
   assert_eq!(String::from_utf8(buf).unwrap(), script);
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn writer_round_trips_a_matroska_packet() {
   let packet = "12,0,Default,Rin,0,0,0,,{\\i1}Hello{\\i0}";

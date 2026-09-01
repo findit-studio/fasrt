@@ -9,6 +9,11 @@ fn tokens(input: &str) -> Vec<TextToken<'_>> {
 }
 
 /// Helper: the cleaned text of an event body.
+///
+/// `normalize` can only clean with `alloc`; without it the method is
+/// documented to return the raw text, so every case that calls this is gated
+/// to the tiers where its answer is meaningful.
+#[cfg(any(feature = "alloc", feature = "std"))]
 fn clean(input: &str) -> String {
   PlainText::new(input).normalize().to_string()
 }
@@ -68,6 +73,9 @@ fn hard_space_is_recognized() {
   );
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn unrecognized_escape_keeps_both_characters() {
   // libass emits the backslash and advances one byte, so the `d` is examined
@@ -83,6 +91,9 @@ fn unrecognized_escape_keeps_both_characters() {
   assert_eq!(clean("a\\db"), "a\\db");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn double_backslash_is_literal() {
   assert_eq!(
@@ -97,6 +108,9 @@ fn double_backslash_is_literal() {
   assert_eq!(clean("a\\\\b"), "a\\\\b");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn a_backslash_before_an_escape_does_not_consume_it() {
   // Only the first backslash is literal; the second one still starts `\N`,
@@ -124,6 +138,9 @@ fn trailing_backslash_is_literal() {
   );
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn escaped_open_brace_is_a_literal_brace() {
   // libass reads `\{` as an escape for a literal `{`, so it must not open an
@@ -140,6 +157,9 @@ fn escaped_open_brace_is_a_literal_brace() {
   assert_eq!(clean("a\\{\\i1}b"), "a{\\i1}b");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn escaped_close_brace_is_a_literal_brace() {
   assert_eq!(
@@ -153,6 +173,9 @@ fn escaped_close_brace_is_a_literal_brace() {
   assert_eq!(clean("a\\}b"), "a}b");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn escaped_braces_survive_cleaning_as_a_pair() {
   assert_eq!(clean("\\{not an override\\}"), "{not an override}");
@@ -190,6 +213,9 @@ fn stray_closing_brace_is_literal() {
   assert_eq!(tokens("a}b"), [TextToken::Text("a}b")]);
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn an_unmatched_open_brace_is_literal_text() {
   // libass only enters an override block when a closing `}` exists; treating
@@ -207,6 +233,9 @@ fn an_unmatched_open_brace_is_literal_text() {
   assert_eq!(clean("a{\\i1"), "a{\\i1");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn text_after_an_unmatched_brace_is_never_dropped() {
   assert_eq!(clean("visible{\\i1"), "visible{\\i1");
@@ -281,6 +310,9 @@ fn an_argument_list_ends_at_the_first_close_paren() {
   assert_eq!(block.drawing_scale(), Some(0));
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn a_one_close_transform_before_p0_ends_drawing_mode() {
   // End to end: geometry must not leak into the cleaned text.
@@ -302,6 +334,9 @@ fn spaces_after_the_backslash_are_skipped() {
   assert_eq!(block.drawing_scale(), Some(1));
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn a_spaced_drawing_tag_still_suppresses_geometry() {
   assert_eq!(clean("{\\ p1}m 0 0 l 9 9{\\ p0}caption"), "caption");
@@ -446,6 +481,9 @@ fn escapes_inside_drawing_mode_stay_drawing() {
 
 // ── Clean text ─────────────────────────────────────────────────────────────
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn plain_line_needs_no_normalization() {
   let text = PlainText::new("Just a line of dialogue.");
@@ -462,36 +500,57 @@ fn markup_triggers_normalization() {
   assert!(!PlainText::new("a}b").requires_normalization());
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn override_tags_are_dropped() {
   assert_eq!(clean("{\\i1}Hello{\\i0} world"), "Hello world");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn hard_break_becomes_a_newline() {
   assert_eq!(clean("one\\Ntwo"), "one\ntwo");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn soft_break_becomes_a_newline() {
   assert_eq!(clean("one\\ntwo"), "one\ntwo");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn hard_space_becomes_a_no_break_space() {
   assert_eq!(clean("one\\htwo"), "one\u{00A0}two");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn drawing_payloads_are_skipped() {
   assert_eq!(clean("{\\p1}m 0 0 l 99 99{\\p0}caption"), "caption");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn stray_braces_survive_cleaning() {
   assert_eq!(clean("a}b"), "a}b");
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn karaoke_syllables_join_into_a_line() {
   assert_eq!(
@@ -500,6 +559,9 @@ fn karaoke_syllables_join_into_a_line() {
   );
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn typesetting_tags_leave_only_the_words() {
   assert_eq!(
@@ -508,6 +570,9 @@ fn typesetting_tags_leave_only_the_words() {
   );
 }
 
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn normalization_is_cached_and_stable() {
   let text = PlainText::new("{\\b1}bold{\\b0}");
@@ -553,6 +618,9 @@ fn segments_drop_markup_and_drawings() {
 
 /// Every input must tokenize to completion without panicking, and cleaning
 /// must never panic either.
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn adversarial_inputs_do_not_panic() {
   let inputs = [
@@ -601,6 +669,9 @@ fn adversarial_inputs_do_not_panic() {
 /// moderately large field would monopolize the CPU. Growing the input by 8x
 /// must not grow the work by anything like 64x, so this asserts a wall-clock
 /// ratio far below quadratic.
+// Asserts cleaned text, which `PlainText::normalize` can only produce with
+// `alloc`; without it the method is documented to return the raw text.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[test]
 fn unmatched_braces_tokenize_in_linear_time() {
   fn elapsed(count: usize) -> std::time::Duration {

@@ -35,10 +35,24 @@ fasrt = "0.3"
 
 ### SRT
 
+SubRip has no formal specification; the cue-body behaviour below is the common
+ground between FFmpeg's `subrip` decoder (`libavcodec/htmlsubtitles.c`, which is
+also what mpv and everything else built on libavcodec uses), VLC's subtitle
+decoder and Aegisub's SRT reader, and each rule is documented against them.
+
 - [x] Strict and lossy parsing modes
 - [x] Timestamps (`HH:MM:SS,mmm`)
 - [x] Multiline cue bodies
 - [x] Writer (`std` feature)
+- [x] Cue body text parsing — two-layer design, both usable standalone on an
+      embedded `S_TEXT/UTF8` packet:
+  - **`TextParser`**: logos DFA-backed, zero-alloc token stream (`no_std`)
+  - **`PlainText`**: clean-text extraction with `OnceCell`-cached lazy normalization, plus an allocation-free `segments()` iterator
+  - Tags: `<b>`, `<i>`, `<u>`, `<s>` and `<font>` with its attributes readable, matched case-insensitively; `<br>` in every form is a line break
+  - A `<` that begins none of them is literal text, and so is the rest of the line — `I <3 this` and the Japanese narration convention `<セリフ` are subtitle text, not markup
+  - Not HTML: character references are **not** decoded, because no SubRip reader decodes them
+  - SSA (`{\an8}`) and MicroDVD (`{Y:i}`) inline codes left behind by a converter are dropped, and a brace that opens neither is text
+  - Flat by construction — no tree, so no nesting depth can overflow the stack and there is no depth bound to configure
 
 ### WebVTT
 
