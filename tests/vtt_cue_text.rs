@@ -1,7 +1,7 @@
 #![cfg(any(feature = "alloc", feature = "std"))]
 
 use fasrt::vtt::cue::{
-  CueParser, CueStr, CueText, CueToken, DEFAULT_MAX_DEPTH, Node, Options, Tag,
+  Classes, CueParser, CueStr, CueText, CueToken, DEFAULT_MAX_DEPTH, Node, Options, Tag, TagNode,
 };
 
 // ── CueParser (token iterator) tests ────────────────────────────────────────
@@ -713,6 +713,591 @@ fn end_tag_branch_table() {
       CueText::parse(input).to_string(),
       *expected,
       "input: {input:?}"
+    );
+  }
+}
+
+// ── W3C §6.4 class list conformance ──────────────────────────────────────────
+//
+// §6.4 attaches a node whose "list of applicable classes" is the start tag's
+// classes "excluding any classes that are the empty string". The raw slice
+// between the tag name and the annotation is *not* that list: it still carries
+// the separators, so a consumer splitting it naively sees empty classes the
+// spec says do not exist.
+
+/// The tree's first node, which every fixture below builds as a tag.
+fn first_tag<'t, 'a>(tree: &'t CueText<'a>) -> &'t TagNode<'a> {
+  match &tree.children()[0] {
+    Node::Tag(node) => node,
+    other => panic!("expected a tag node, got {other:?}"),
+  }
+}
+
+/// The issue's row: `<c.a..b>` has two classes, not one raw `"a..b"` that a
+/// naive split reads as three.
+#[test]
+fn empty_classes_are_excluded_from_the_class_list() {
+  let tree = CueText::parse("<c.a..b>x</c>");
+  let node = first_tag(&tree);
+
+  assert_eq!(node.classes().collect::<Vec<_>>(), ["a", "b"]);
+
+  // The raw slice is still the source text, separators and all — which is
+  // exactly why splitting it is the trap this face closes.
+  assert_eq!(node.classes_raw(), "a..b");
+  assert_eq!(node.classes_raw().split('.').count(), 3);
+}
+
+/// Every dot shape, read off a real parse: U+002E is the only separator, and
+/// an empty run between two of them contributes nothing.
+#[test]
+fn the_class_list_splits_on_full_stop_and_skips_empties() {
+  const CASES: &[(&str, &[&str])] = &[
+    ("<c>x</c>", &[]),
+    ("<c.loud>x</c>", &["loud"]),
+    ("<c.loud.important>x</c>", &["loud", "important"]),
+    // The issue's shape, and its neighbour.
+    ("<c.a..b>x</c>", &["a", "b"]),
+    ("<c.a...b>x</c>", &["a", "b"]),
+    // Leading, trailing, and nothing but dots.
+    ("<c..a>x</c>", &["a"]),
+    ("<c.a.>x</c>", &["a"]),
+    ("<c.>x</c>", &[]),
+    ("<c..>x</c>", &[]),
+    ("<c...>x</c>", &[]),
+    // Classes end where the annotation begins.
+    ("<v.a..b Esme>x</v>", &["a", "b"]),
+    ("<c.a.. b>x</c>", &["a"]),
+    // A class name is arbitrary text, not ASCII.
+    ("<c.日本語..b>x</c>", &["日本語", "b"]),
+    // Every tag that can carry classes reads them the same way.
+    ("<b.a..b>x</b>", &["a", "b"]),
+    ("<i.a..b>x</i>", &["a", "b"]),
+    ("<u.a..b>x</u>", &["a", "b"]),
+    ("<ruby.a..b>x</ruby>", &["a", "b"]),
+    ("<lang.a..b en>x</lang>", &["a", "b"]),
+  ];
+
+  for (input, expected) in CASES {
+    let tree = CueText::parse(input);
+    let classes: Vec<_> = first_tag(&tree).classes().collect();
+    assert_eq!(classes, *expected, "input: {input:?}");
+  }
+}
+
+/// The list is derived, never stored, so it reads the same off a hand-built
+/// node — and a cloned iterator re-reads it from the start.
+#[test]
+fn the_class_list_is_derived_from_the_raw_slice() {
+  let node = TagNode::new(Tag::Class).with_classes(".a..b.");
+  let classes = node.classes();
+
+  assert_eq!(classes.clone().collect::<Vec<_>>(), ["a", "b"]);
+  assert_eq!(classes.count(), 2);
+  assert_eq!(node.classes_raw(), ".a..b.");
+
+  let mut node = TagNode::new(Tag::Class);
+  node.set_classes("..");
+  assert_eq!(node.classes().next(), None);
+  assert_eq!(node.classes_raw(), "..");
+}
+
+/// A token-level consumer never builds a tree, so the same face is reachable
+/// straight from a start tag's raw class list.
+#[test]
+fn a_start_tag_tokens_classes_read_the_same() {
+  let tokens: Vec<_> = CueParser::new("<c.a..b>x</c>").collect();
+  let CueToken::StartTag { classes, .. } = &tokens[0] else {
+    panic!("expected a start tag, got {:?}", tokens[0]);
+  };
+
+  assert_eq!(*classes, "a..b");
+  assert_eq!(Classes::new(classes).collect::<Vec<_>>(), ["a", "b"]);
+}
+
+/// Excluding the empty classes does not rewrite the cue: the node keeps the
+/// raw list, so serializing the tree writes back what was read.
+#[test]
+fn the_raw_class_list_survives_a_round_trip() {
+  const CASES: &[&str] = &[
+    "<c.a..b>x</c>",
+    "<c..a>x</c>",
+    "<c.a.>x</c>",
+    "<v.a..b Esme>x</v>",
+  ];
+
+  for input in CASES {
+    assert_eq!(
+      CueText::parse(input).to_string(),
+      *input,
+      "input: {input:?}"
+    );
+  }
+
+  // A list that is nothing but separators is the one shape whose dots do not
+  // survive: the tokenizer keeps no class text at all for `<c.>`.
+  assert_eq!(CueText::parse("<c.>x</c>").to_string(), "<c>x</c>");
+}
+
+// ── W3C §6.4 applicable language conformance ─────────────────────────────────
+//
+// §6.4 keeps a language stack: `<lang>` pushes its annotation before it
+// attaches, `</lang>` pops when it closes a `<lang>`, and every attached node
+// is stamped with the top entry. That stack is exactly the chain of enclosing
+// `<lang>` nodes, so the language is derived from the tree rather than stored
+// on every node — where an edit through `children_mut` could leave it stale.
+
+/// Each node paired with its applicable language, in document order, with tag
+/// nodes named and text nodes quoted.
+fn languages(tree: &CueText<'_>) -> Vec<(String, Option<String>)> {
+  tree
+    .nodes_with_language()
+    .map(|(node, language)| {
+      let name = match node {
+        Node::Text(text) => format!("{:?}", text.normalize()),
+        Node::Timestamp(_) => "<timestamp>".to_owned(),
+        Node::Tag(tag) => tag.tag().to_string(),
+      };
+      (name, language.map(str::to_owned))
+    })
+    .collect()
+}
+
+/// A language the walk reports as applicable, for the tables below.
+fn lang(language: &str) -> Option<String> {
+  Some(language.to_owned())
+}
+
+/// `<lang>` is the only tag that pushes, and it pushes its annotation.
+#[test]
+fn declared_language_is_the_language_stack_push() {
+  assert_eq!(
+    TagNode::new(Tag::Lang)
+      .with_annotation(Some("en"))
+      .declared_language(),
+    Some("en")
+  );
+
+  // §6.4 pushes the annotation whatever it is, and an absent one is the empty
+  // string — an entry that clears rather than one that inherits.
+  assert_eq!(TagNode::new(Tag::Lang).declared_language(), Some(""));
+
+  // No other tag touches the stack, `<v>`'s annotation included.
+  for tag in [
+    Tag::Bold,
+    Tag::Italic,
+    Tag::Underline,
+    Tag::Class,
+    Tag::Ruby,
+  ] {
+    assert_eq!(TagNode::new(tag).declared_language(), None, "tag: {tag}");
+  }
+  assert_eq!(
+    TagNode::new(Tag::Voice)
+      .with_annotation(Some("Esme"))
+      .declared_language(),
+    None
+  );
+}
+
+/// The applicable language is the nearest enclosing `<lang>`'s annotation, and
+/// the empty string where none encloses the node. A `<lang>` node carries the
+/// language it declares, because §6.4 pushes before it attaches.
+#[test]
+fn the_applicable_language_is_the_nearest_enclosing_lang() {
+  let tree = CueText::parse("<lang en>a<b>b</b></lang>c");
+
+  assert_eq!(
+    languages(&tree),
+    [
+      ("lang".to_owned(), lang("en")),
+      ("\"a\"".to_owned(), lang("en")),
+      ("b".to_owned(), lang("en")),
+      ("\"b\"".to_owned(), lang("en")),
+      ("\"c\"".to_owned(), None),
+    ]
+  );
+}
+
+/// A nested `<lang>` shadows the one above it for its subtree only, and an
+/// annotation-less `<lang>` shadows with the empty language rather than
+/// letting the enclosing one through.
+#[test]
+fn a_nested_lang_shadows_the_one_above_it() {
+  let nested = CueText::parse("<lang en>a<lang ja>b</lang>c</lang>");
+  assert_eq!(
+    languages(&nested),
+    [
+      ("lang".to_owned(), lang("en")),
+      ("\"a\"".to_owned(), lang("en")),
+      ("lang".to_owned(), lang("ja")),
+      ("\"b\"".to_owned(), lang("ja")),
+      ("\"c\"".to_owned(), lang("en")),
+    ]
+  );
+
+  let cleared = CueText::parse("<lang en>a<lang>b</lang>c</lang>");
+  assert_eq!(
+    languages(&cleared),
+    [
+      ("lang".to_owned(), lang("en")),
+      ("\"a\"".to_owned(), lang("en")),
+      // An empty *push*, not an empty stack.
+      ("lang".to_owned(), lang("")),
+      ("\"b\"".to_owned(), lang("")),
+      ("\"c\"".to_owned(), lang("en")),
+    ]
+  );
+}
+
+/// `None` and `Some("")` are different answers. `None` is §6.4's empty
+/// language stack — nothing in the cue speaks to this node's language, so a
+/// fallback from outside the cue applies to it. `Some("")` is an
+/// annotation-less `<lang>`, which pushed the empty string and thereby said
+/// the subtree is in no known language, clearing that fallback rather than
+/// deferring to it.
+#[test]
+fn an_empty_language_is_not_the_absence_of_one() {
+  let tree = CueText::parse("<b>x</b><lang><b>y</b></lang>");
+
+  assert_eq!(
+    languages(&tree),
+    [
+      ("b".to_owned(), None),
+      ("\"x\"".to_owned(), None),
+      ("lang".to_owned(), lang("")),
+      ("b".to_owned(), lang("")),
+      ("\"y\"".to_owned(), lang("")),
+    ]
+  );
+
+  // The one-step accessor draws the same line, which is what lets the walk.
+  assert_eq!(TagNode::new(Tag::Bold).declared_language(), None);
+  assert_eq!(TagNode::new(Tag::Lang).declared_language(), Some(""));
+}
+
+/// The stack and the tree cannot drift apart, because §6.4 only ever pops when
+/// it closes a `<lang>` node. An end tag it ignores pops nothing, and the one
+/// end tag that closes a node it does not name — `</ruby>` over an open `<rt>`
+/// — closes no Language Object either.
+#[test]
+fn only_closing_a_lang_ends_its_scope() {
+  // `</lang>` while current is the `<b>`: §6.4 ignores it, so the `<lang>`
+  // stays open and everything after it is still in `en`.
+  let ignored = CueText::parse("<lang en><b></lang>x");
+  assert_eq!(ignored.to_string(), "<lang en><b>x</b></lang>");
+  assert_eq!(
+    languages(&ignored),
+    [
+      ("lang".to_owned(), lang("en")),
+      ("b".to_owned(), lang("en")),
+      ("\"x\"".to_owned(), lang("en")),
+    ]
+  );
+
+  // The ruby double-close crosses two nodes at once; neither is a `<lang>`.
+  let ruby = CueText::parse("<lang en><ruby>a<rt>b</ruby>c</lang>d");
+  assert_eq!(
+    ruby.to_string(),
+    "<lang en><ruby>a<rt>b</rt></ruby>c</lang>d"
+  );
+  assert_eq!(
+    languages(&ruby),
+    [
+      ("lang".to_owned(), lang("en")),
+      ("ruby".to_owned(), lang("en")),
+      ("\"a\"".to_owned(), lang("en")),
+      ("rt".to_owned(), lang("en")),
+      ("\"b\"".to_owned(), lang("en")),
+      ("\"c\"".to_owned(), lang("en")),
+      ("\"d\"".to_owned(), None),
+    ]
+  );
+
+  // A `<lang>` left open at end of input scopes everything it opened.
+  let unclosed = CueText::parse("<lang en>a<i>b");
+  assert_eq!(
+    languages(&unclosed),
+    [
+      ("lang".to_owned(), lang("en")),
+      ("\"a\"".to_owned(), lang("en")),
+      ("i".to_owned(), lang("en")),
+      ("\"b\"".to_owned(), lang("en")),
+    ]
+  );
+}
+
+/// The walk answers for the tree it is given. A `<lang>` past
+/// `Options::max_depth` is discarded exactly as an unrecognized tag is, and it
+/// takes its scope with it along with its markup — so the text it covered
+/// reads as no language at all. `try_parse` is the way to refuse such input
+/// rather than accept a tree that dropped part of it.
+#[test]
+fn an_over_deep_lang_takes_its_scope_with_it() {
+  let opts = Options::new().with_max_depth(1);
+  let bounded = CueText::parse_with("<b><lang fr>x</lang>y</b>", opts);
+  assert_eq!(bounded.to_string(), "<b>xy</b>");
+  assert_eq!(
+    languages(&bounded),
+    [
+      ("b".to_owned(), None),
+      ("\"x\"".to_owned(), None),
+      ("\"y\"".to_owned(), None),
+    ]
+  );
+  assert!(CueText::try_parse_with("<b><lang fr>x</lang>y</b>", opts).is_err());
+
+  // Within the limit, the same cue keeps the scope.
+  let within = CueText::parse_with(
+    "<b><lang fr>x</lang>y</b>",
+    Options::new().with_max_depth(2),
+  );
+  assert_eq!(
+    languages(&within),
+    [
+      ("b".to_owned(), None),
+      ("lang".to_owned(), lang("fr")),
+      ("\"x\"".to_owned(), lang("fr")),
+      ("\"y\"".to_owned(), None),
+    ]
+  );
+
+  // `max_depth` zero keeps the text and no tag at all.
+  let flat = CueText::parse_with("<lang fr>x</lang>y", Options::new().with_max_depth(0));
+  assert_eq!(flat.to_string(), "xy");
+  assert!(languages(&flat).iter().all(|(_, lang)| lang.is_none()));
+
+  // And the same at the default limit's boundary, where the depth bound is
+  // holding back a cue that nests past it.
+  let deep = format!("{}<lang fr>x</lang>y", "<i>".repeat(DEFAULT_MAX_DEPTH));
+  let at_boundary = CueText::parse(&deep);
+  assert!(
+    languages(&at_boundary)
+      .iter()
+      .all(|(_, lang)| lang.is_none()),
+    "the over-deep <lang> is not in the tree, so neither is its scope"
+  );
+  assert!(CueText::try_parse(&deep).is_err());
+}
+
+/// The scope is §6.4's; the *value* is the annotation exactly as the parser
+/// stores it. This crate keeps annotations verbatim and does not run §6.4's
+/// annotation-state normalization — character references stay undecoded and
+/// runs of whitespace uncollapsed — for `<lang>` as for `<v>`. That is the
+/// tokenizer's half of §6.4, and this fixture pins where the line falls.
+#[test]
+fn the_language_is_the_annotation_as_stored() {
+  let entity = CueText::parse("<lang en&#x2D;US>x</lang>");
+  assert_eq!(
+    languages(&entity),
+    [
+      ("lang".to_owned(), lang("en&#x2D;US")),
+      ("\"x\"".to_owned(), lang("en&#x2D;US")),
+    ]
+  );
+
+  let runs = CueText::parse("<lang en   US>x</lang>");
+  assert_eq!(
+    languages(&runs),
+    [
+      ("lang".to_owned(), lang("en   US")),
+      ("\"x\"".to_owned(), lang("en   US")),
+    ]
+  );
+
+  // The same text reaches `annotation()`, so the two faces never disagree.
+  assert_eq!(first_tag(&entity).annotation(), Some("en&#x2D;US"));
+  assert_eq!(
+    first_tag(&entity).declared_language(),
+    first_tag(&entity).annotation()
+  );
+}
+
+/// The walk is document order — every node, each tag before its children, and
+/// timestamps and text alike.
+#[test]
+fn the_language_walk_is_document_order() {
+  let tree = CueText::parse("<b>1<i>2</i><00:01.000>3</b>4");
+
+  assert_eq!(
+    languages(&tree),
+    [
+      ("b".to_owned(), None),
+      ("\"1\"".to_owned(), None),
+      ("i".to_owned(), None),
+      ("\"2\"".to_owned(), None),
+      ("<timestamp>".to_owned(), None),
+      ("\"3\"".to_owned(), None),
+      ("\"4\"".to_owned(), None),
+    ]
+  );
+  assert_eq!(tree.nodes_with_language().count(), 7);
+}
+
+/// The walk keeps its ancestors on the heap, so a tree deeper than a recursive
+/// descent would care to be costs it no stack — and the language it carries
+/// survives the whole descent.
+#[test]
+fn the_language_walk_costs_no_stack_in_the_depth_of_the_tree() {
+  let depth = 256;
+  let payload = format!(
+    "<lang en>{}deep{}</lang>",
+    "<i>".repeat(depth),
+    "</i>".repeat(depth)
+  );
+  let tree = CueText::parse_with(&payload, Options::new().with_max_depth(depth + 1));
+
+  let visited: Vec<_> = tree.nodes_with_language().collect();
+  // One `<lang>`, `depth` italics and one text node — all of them in `en`.
+  assert_eq!(visited.len(), depth + 2);
+  assert!(visited.iter().all(|(_, language)| *language == Some("en")));
+}
+
+// ── W3C §6.4 tag delimiters ──────────────────────────────────────────────────
+//
+// §6.4's tokenizer leaves the tag-name and class-list states on any of four
+// ASCII whitespace characters — TAB, LF, FF and SPACE — and enters the start
+// tag annotation state. A cue payload spans lines, so an LF inside a tag is
+// reachable input; recognizing only TAB and SPACE dropped such a tag entirely
+// (taking a `<lang>` scope with it) and let an LF sit inside a class name.
+
+/// The four delimiters §6.4 names, each of which ends a tag name.
+const DELIMITERS: [char; 4] = ['\t', '\n', '\u{000C}', ' '];
+
+#[test]
+fn every_delimiter_ends_a_tag_name() {
+  for delimiter in DELIMITERS {
+    let input = format!("<lang{delimiter}en>x</lang>");
+    let tokens: Vec<_> = CueParser::new(&input).collect();
+    assert!(
+      matches!(
+        &tokens[0],
+        CueToken::StartTag {
+          tag: Tag::Lang,
+          classes: "",
+          annotation: Some("en"),
+        }
+      ),
+      "delimiter {delimiter:?} gave {:?}",
+      tokens.first()
+    );
+
+    // And in the tree, where the tag's whole scope rides on it being seen.
+    let tree = CueText::parse(&input);
+    assert_eq!(
+      languages(&tree),
+      [
+        ("lang".to_owned(), lang("en")),
+        ("\"x\"".to_owned(), lang("en")),
+      ],
+      "delimiter {delimiter:?}"
+    );
+  }
+}
+
+#[test]
+fn every_delimiter_ends_a_class_list() {
+  for delimiter in DELIMITERS {
+    let input = format!("<c.a..b{delimiter}note>x</c>");
+    let tokens: Vec<_> = CueParser::new(&input).collect();
+    assert!(
+      matches!(
+        &tokens[0],
+        CueToken::StartTag {
+          tag: Tag::Class,
+          classes: "a..b",
+          annotation: Some("note"),
+        }
+      ),
+      "delimiter {delimiter:?} gave {:?}",
+      tokens.first()
+    );
+
+    let tree = CueText::parse(&input);
+    let node = first_tag(&tree);
+    assert_eq!(
+      node.classes().collect::<Vec<_>>(),
+      ["a", "b"],
+      "delimiter {delimiter:?}"
+    );
+    assert_eq!(node.annotation(), Some("note"), "delimiter {delimiter:?}");
+  }
+}
+
+/// §6.4 trims the annotation over Infra's ASCII whitespace, not Unicode's set
+/// — so a NO-BREAK SPACE is annotation text, not padding. That trim set is one
+/// character wider than the delimiters above: CR ends no state, but it is
+/// still ASCII whitespace and is still trimmed.
+#[test]
+fn the_annotation_is_trimmed_over_ascii_whitespace() {
+  let tree = CueText::parse("<v \t\n\u{000C}\rEsme \t\n\u{000C}\r>x</v>");
+  assert_eq!(first_tag(&tree).annotation(), Some("Esme"));
+
+  let kept = CueText::parse("<v \u{00A0}Esme\u{00A0}>x</v>");
+  assert_eq!(first_tag(&kept).annotation(), Some("\u{00A0}Esme\u{00A0}"));
+
+  // CR is trimmed but never delimits, so a language keeps none of it.
+  let cr_padded = CueText::parse("<lang \ren\r>x</lang>");
+  assert_eq!(first_tag(&cr_padded).declared_language(), Some("en"));
+  assert!(
+    languages(&cr_padded)
+      .iter()
+      .all(|(_, language)| *language == lang("en"))
+  );
+
+  // Whitespace-only leaves no annotation at all, CR-only included, and the
+  // unterminated path answers the same way.
+  for input in ["<v \t >x</v>", "<v \r>x</v>", "<v \r\n>x</v>"] {
+    assert_eq!(
+      first_tag(&CueText::parse(input)).annotation(),
+      None,
+      "{input:?}"
+    );
+  }
+  let unterminated: Vec<_> = CueParser::new("<v \rEsme\r").collect();
+  assert!(matches!(
+    &unterminated[0],
+    CueToken::StartTag {
+      tag: Tag::Voice,
+      annotation: Some("Esme"),
+      ..
+    }
+  ));
+}
+
+/// A tag left unterminated at end of input is recognized by a separate path,
+/// which reads the same delimiter set.
+#[test]
+fn every_delimiter_ends_a_name_in_an_unterminated_tag() {
+  for delimiter in DELIMITERS {
+    let lang_input = format!("<lang{delimiter}en");
+    let lang: Vec<_> = CueParser::new(&lang_input).collect();
+    assert!(
+      matches!(
+        &lang[0],
+        CueToken::StartTag {
+          tag: Tag::Lang,
+          annotation: Some("en"),
+          ..
+        }
+      ),
+      "delimiter {delimiter:?} gave {:?}",
+      lang.first()
+    );
+
+    let class_input = format!("<c.a..b{delimiter}note");
+    let class: Vec<_> = CueParser::new(&class_input).collect();
+    assert!(
+      matches!(
+        &class[0],
+        CueToken::StartTag {
+          tag: Tag::Class,
+          classes: "a..b",
+          annotation: Some("note"),
+        }
+      ),
+      "delimiter {delimiter:?} gave {:?}",
+      class.first()
     );
   }
 }
