@@ -85,10 +85,12 @@ fn format_node(node: &Node<'_>, depth: usize, out: &mut String) {
 
       let child_indent = "  ".repeat(depth + 1);
 
-      // Classes (dot-separated → space-separated)
-      let classes = tag_node.classes();
+      // Classes → the HTML `class` attribute. §6.4's list, not the raw slice:
+      // splitting the raw text naively would spell `<c.a..b>` as `"a  b"`,
+      // where the spec's list is the two classes `a` and `b`.
+      let classes: Vec<&str> = tag_node.classes().collect();
       if !classes.is_empty() {
-        let space_separated = classes.replace('.', " ");
+        let space_separated = classes.join(" ");
         out.push_str(&format!("| {child_indent}class=\"{space_separated}\"\n"));
       }
 

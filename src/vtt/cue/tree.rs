@@ -158,6 +158,76 @@ pub struct TagNode<'a, C> {
   children: C,
 }
 
+/// A lazy iterator over a start tag's classes, as W3C WebVTT §6.4 reads them.
+///
+/// Created by [`TagNode::classes`], or from a [`CueToken::StartTag`]'s raw
+/// class list with [`Classes::new`].
+///
+/// The raw list is the dot-separated text between a tag name and its
+/// annotation. §6.4 attaches a node whose "list of applicable classes" is that
+/// text split on U+002E FULL STOP, *"excluding any classes that are the empty
+/// string"* — so a run of dots contributes nothing: `<c.a..b>` has the two
+/// classes `a` and `b`, and `<c.>` has none.
+///
+/// ```rust
+/// use fasrt::vtt::cue::Classes;
+///
+/// let classes: Vec<_> = Classes::new("a..b").collect();
+/// assert_eq!(classes, ["a", "b"]);
+/// assert_eq!(Classes::new("..").next(), None);
+/// ```
+///
+/// [`CueToken::StartTag`]: crate::vtt::cue::CueToken::StartTag
+#[derive(Debug, Clone)]
+pub struct Classes<'a> {
+  rest: &'a str,
+}
+
+impl<'a> Classes<'a> {
+  /// Create a class iterator over a start tag's raw dot-separated class list.
+  ///
+  /// ```rust
+  /// use fasrt::vtt::cue::{Classes, CueParser, CueToken};
+  ///
+  /// let mut parser = CueParser::new("<c.loud.important>text</c>");
+  /// let Some(CueToken::StartTag { classes, .. }) = parser.next() else {
+  ///   unreachable!()
+  /// };
+  /// assert_eq!(Classes::new(classes).collect::<Vec<_>>(), ["loud", "important"]);
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(raw: &'a str) -> Self {
+    Self { rest: raw }
+  }
+}
+
+impl<'a> Iterator for Classes<'a> {
+  type Item = &'a str;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    loop {
+      if self.rest.is_empty() {
+        return None;
+      }
+      match self.rest.find('.') {
+        // U+002E is one byte, so `idx + 1` is a char boundary.
+        Some(idx) => {
+          let (class, rest) = self.rest.split_at(idx);
+          self.rest = &rest[1..];
+          if !class.is_empty() {
+            return Some(class);
+          }
+        }
+        // The tail holds no separator, and it is not empty: it is the last
+        // class, and the iterator is done after it.
+        None => return Some(core::mem::take(&mut self.rest)),
+      }
+    }
+  }
+}
+
+impl core::iter::FusedIterator for Classes<'_> {}
+
 impl<'a, C> AsRef<[TagNode<'a, C>]> for TagNode<'a, C> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn as_ref(&self) -> &[TagNode<'a, C>] {
@@ -239,8 +309,11 @@ impl<'a, C> TagNode<'a, C> {
     self
   }
 
-  /// Returns the dot-separated class names (e.g., `"loud.important"`),
-  /// empty if none.
+  /// Returns the node's classes, as W3C WebVTT §6.4 reads them: the raw list
+  /// split on U+002E FULL STOP, *"excluding any classes that are the empty
+  /// string"*.
+  ///
+  /// Use [`classes_raw`](Self::classes_raw) for the undivided source text.
   ///
   /// ```rust
   /// # #[cfg(any(feature = "alloc", feature = "std"))]
@@ -248,15 +321,40 @@ impl<'a, C> TagNode<'a, C> {
   /// use fasrt::vtt::cue::{TagNode, Tag};
   ///
   /// let node = TagNode::new(Tag::Class).with_classes("loud.important");
-  /// assert_eq!(node.classes(), "loud.important");
+  /// assert_eq!(node.classes().collect::<Vec<_>>(), ["loud", "important"]);
+  ///
+  /// // A run of dots yields no empty class.
+  /// let node = TagNode::new(Tag::Class).with_classes("a..b");
+  /// assert_eq!(node.classes().collect::<Vec<_>>(), ["a", "b"]);
   /// # }
   /// ```
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn classes(&self) -> &'a str {
+  pub const fn classes(&self) -> Classes<'a> {
+    Classes::new(self.classes)
+  }
+
+  /// Returns the raw dot-separated class list, exactly as it appeared
+  /// (e.g. `"loud.important"`), empty if the tag declared none.
+  ///
+  /// This is the source text, not §6.4's class list: it still carries any
+  /// empty classes the spec excludes. Use [`classes`](Self::classes) to read
+  /// the list itself.
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::{TagNode, Tag};
+  ///
+  /// let node = TagNode::new(Tag::Class).with_classes("a..b");
+  /// assert_eq!(node.classes_raw(), "a..b");
+  /// # }
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn classes_raw(&self) -> &'a str {
     self.classes
   }
 
-  /// Sets the class names (builder pattern).
+  /// Sets the raw dot-separated class list (builder pattern).
   ///
   /// ```rust
   /// # #[cfg(any(feature = "alloc", feature = "std"))]
@@ -264,7 +362,7 @@ impl<'a, C> TagNode<'a, C> {
   /// use fasrt::vtt::cue::{TagNode, Tag};
   ///
   /// let node = TagNode::new(Tag::Class).with_classes("highlight");
-  /// assert_eq!(node.classes(), "highlight");
+  /// assert_eq!(node.classes_raw(), "highlight");
   /// # }
   /// ```
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -273,7 +371,7 @@ impl<'a, C> TagNode<'a, C> {
     self
   }
 
-  /// Sets the class names.
+  /// Sets the raw dot-separated class list.
   ///
   /// ```rust
   /// # #[cfg(any(feature = "alloc", feature = "std"))]
@@ -282,7 +380,7 @@ impl<'a, C> TagNode<'a, C> {
   ///
   /// let mut node = TagNode::new(Tag::Class);
   /// node.set_classes("loud");
-  /// assert_eq!(node.classes(), "loud");
+  /// assert_eq!(node.classes_raw(), "loud");
   /// # }
   /// ```
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -341,6 +439,56 @@ impl<'a, C> TagNode<'a, C> {
   pub fn set_annotation(&mut self, annotation: Option<&'a str>) -> &mut Self {
     self.annotation = annotation;
     self
+  }
+
+  /// Returns the language this node makes applicable to itself and its
+  /// descendants, or `None` when it leaves the enclosing language standing.
+  ///
+  /// This is §6.4's language stack, read off the tree: `<lang>` is the only
+  /// tag that pushes, and it pushes its annotation. An annotation-less
+  /// `<lang>` pushes the empty string, which is a language entry like any
+  /// other — it *clears* an enclosing language rather than inheriting it, so
+  /// this returns `Some("")` and not `None`.
+  ///
+  /// [`CueText::nodes_with_language`] walks a whole tree with this rule
+  /// applied; use this accessor when descending the tree yourself.
+  ///
+  /// # The value is the annotation as stored
+  ///
+  /// What is returned is [`annotation`](Self::annotation) verbatim. §6.4's
+  /// annotation state also decodes character references and collapses runs of
+  /// internal whitespace to a single space, neither of which this parser does:
+  /// both need an owned string, and an annotation is a slice borrowed from the
+  /// cue. So `<lang en&#x2D;US>` declares `"en&#x2D;US"` and not `"en-US"`.
+  /// That holds for every annotation the crate reports, `<v>`'s voice
+  /// included. What this accessor settles is the *scope*: which nodes a
+  /// `<lang>` covers.
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::{TagNode, Tag};
+  ///
+  /// let lang = TagNode::new(Tag::Lang).with_annotation(Some("en"));
+  /// assert_eq!(lang.declared_language(), Some("en"));
+  ///
+  /// // `<lang>` with no annotation clears the enclosing language.
+  /// assert_eq!(TagNode::new(Tag::Lang).declared_language(), Some(""));
+  ///
+  /// // Every other tag declares nothing — `<v>`'s annotation is a voice.
+  /// let voice = TagNode::new(Tag::Voice).with_annotation(Some("Esme"));
+  /// assert_eq!(voice.declared_language(), None);
+  /// # }
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn declared_language(&self) -> Option<&'a str> {
+    match self.tag {
+      Tag::Lang => match self.annotation {
+        Some(language) => Some(language),
+        None => Some(""),
+      },
+      _ => None,
+    }
   }
 
   /// Returns the child nodes as a slice.
@@ -448,7 +596,7 @@ impl TagNode<'_> {
   ///
   /// let node = TagNode::new(Tag::Bold);
   /// assert_eq!(node.tag(), Tag::Bold);
-  /// assert_eq!(node.classes(), "");
+  /// assert_eq!(node.classes_raw(), "");
   /// assert_eq!(node.annotation(), None);
   /// assert!(node.children().is_empty());
   /// # }
@@ -473,7 +621,7 @@ impl TagNode<'_> {
   ///
   /// let node = TagNode::with_vec_capacity(Tag::Bold, 10);
   /// assert_eq!(node.tag(), Tag::Bold);
-  /// assert_eq!(node.classes(), "");
+  /// assert_eq!(node.classes_raw(), "");
   /// assert_eq!(node.annotation(), None);
   /// assert!(node.children().is_empty());
   /// # }
@@ -841,7 +989,133 @@ impl<'a, C> CueText<'a, C> {
   {
     self.children.as_mut()
   }
+
+  /// Walks the whole tree in document order, pairing every node with the
+  /// language W3C WebVTT §6.4 makes applicable to it.
+  ///
+  /// §6.4 keeps a language stack and stamps each node it attaches with the
+  /// stack's top entry. That stack is exactly the chain of enclosing `<lang>`
+  /// nodes — `<lang>` is the only tag that pushes, and the only end tag that
+  /// pops is the one that closes a `<lang>` — so the applicable language is
+  /// derived here rather than stored on the node: a derived answer cannot go
+  /// stale when a tree is edited through [`children_mut`](Self::children_mut).
+  ///
+  /// The language is the annotation of the nearest enclosing `<lang>`, and
+  /// `None` where none encloses the node — §6.4's empty stack. A `<lang>` node
+  /// carries the language it declares, since §6.4 pushes before it attaches.
+  /// The annotation is reported as stored, with the normalization caveat
+  /// [`TagNode::declared_language`] documents.
+  ///
+  /// `None` and `Some("")` are different answers and a caller must not merge
+  /// them. `None` is an empty language stack: nothing in the cue says anything
+  /// about this node's language, so a fallback from outside the cue — the
+  /// track's language, say — applies to it. `Some("")` is an annotation-less
+  /// `<lang>`, which pushed the empty string: the cue has said, explicitly,
+  /// that this subtree is in no known language, and that clears the fallback
+  /// rather than deferring to it.
+  ///
+  /// The walk is iterative, so it costs no stack in the depth of the tree.
+  ///
+  /// # It answers for the tree it is given
+  ///
+  /// A `<lang>` that [`Options::max_depth`] dropped is not in the tree, so its
+  /// scope is not either: `parse_with("<b><lang fr>x</lang>y</b>", max_depth =
+  /// 1)` builds `<b>xy</b>`, and both text nodes read as `""`. This is the
+  /// depth bound's documented lossiness — the over-deep tag is discarded
+  /// exactly as an unrecognized tag is, and it takes its language with it,
+  /// just as it takes its classes and its markup. A caller who needs the
+  /// applicable language to mean §6.4's unbounded answer should parse with
+  /// [`try_parse`] or [`try_parse_with`], which refuse input that deep rather
+  /// than returning a tree that dropped part of it.
+  ///
+  /// [`try_parse`]: CueText::try_parse
+  /// [`try_parse_with`]: CueText::try_parse_with
+  ///
+  /// ```rust
+  /// # #[cfg(any(feature = "alloc", feature = "std"))]
+  /// # {
+  /// use fasrt::vtt::cue::{CueText, Node};
+  ///
+  /// let tree = CueText::parse("<lang ja>ハロー<b>ワールド</b></lang>!");
+  /// let text: Vec<_> = tree
+  ///   .nodes_with_language()
+  ///   .filter_map(|(node, language)| match node {
+  ///     Node::Text(text) => Some((text.normalize(), language)),
+  ///     _ => None,
+  ///   })
+  ///   .collect();
+  /// assert_eq!(
+  ///   text,
+  ///   [("ハロー", Some("ja")), ("ワールド", Some("ja")), ("!", None)],
+  /// );
+  /// # }
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn nodes_with_language(&self) -> NodesWithLanguage<'_, 'a>
+  where
+    C: AsRef<[Node<'a>]>,
+  {
+    NodesWithLanguage::new(self.children.as_ref())
+  }
 }
+
+/// A depth-first walk over a cue text tree, pairing each node with its
+/// applicable language.
+///
+/// Created by [`CueText::nodes_with_language`], which documents how the
+/// language is derived.
+#[derive(Debug, Clone)]
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
+pub struct NodesWithLanguage<'t, 'a> {
+  /// One frame per open ancestor, each holding the siblings still to visit
+  /// and the language applicable inside that ancestor.
+  stack: Vec<(core::slice::Iter<'t, Node<'a>>, Option<&'a str>)>,
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+impl<'t, 'a> NodesWithLanguage<'t, 'a> {
+  fn new(nodes: &'t [Node<'a>]) -> Self {
+    // §6.4 starts with an empty language stack, which has no top entry —
+    // distinct from a top entry that is the empty string.
+    Self {
+      stack: std::vec![(nodes.iter(), None)],
+    }
+  }
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
+impl<'t, 'a> Iterator for NodesWithLanguage<'t, 'a> {
+  /// A node and the language applicable to it: the top of §6.4's language
+  /// stack, or `None` while that stack is empty.
+  type Item = (&'t Node<'a>, Option<&'a str>);
+
+  fn next(&mut self) -> Option<Self::Item> {
+    loop {
+      let (siblings, language) = self.stack.last_mut()?;
+      let language = *language;
+      match siblings.next() {
+        // A tag node may declare a language for its own subtree; §6.4 pushes
+        // before attaching, so the node itself already carries it. `or` keeps
+        // an annotation-less `<lang>`'s `Some("")` — it pushed, and an empty
+        // push is not the same as no push.
+        Some(node @ Node::Tag(tag)) => {
+          let inner = tag.declared_language().or(language);
+          self.stack.push((tag.children().iter(), inner));
+          return Some((node, inner));
+        }
+        Some(node) => return Some((node, language)),
+        None => {
+          self.stack.pop();
+        }
+      }
+    }
+  }
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+impl core::iter::FusedIterator for NodesWithLanguage<'_, '_> {}
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
