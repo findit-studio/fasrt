@@ -1,0 +1,26 @@
+# Fixture corpora are test data, and the tests read them as bytes: the ASS
+# writer battery asserts that parse-then-write reproduces a fixture *byte for
+# byte*, and the WebVTT suites compare parsed cue text against expectations
+# that spell their line terminators out. Git must therefore hand every fixture
+# to a test exactly as it is stored, on every platform.
+#
+# `-text` turns end-of-line conversion off in both directions. It is not
+# `eol=lf`: that marks a file as text, which would both rewrite the corpus on
+# the next commit that touches it and hide the platform difference rather than
+# remove it. The corpus deliberately carries all three shapes — 131 SubRip
+# fixtures and `fixtures/ass/crlf_bom.ass` are CRLF, `newlines.vtt` mixes CRLF
+# and LF on purpose, and the rest are LF — and each is the input its test was
+# written against.
+#
+# Without this, a Windows checkout under `core.autocrlf=true` (the default on
+# the GitHub Actions Windows runners) converts every one of the 245 LF-stored
+# fixtures to CRLF and
+# `tests/ass.rs::canonical_fixtures_round_trip_byte_for_byte` compares an LF
+# write against a CRLF file.
+fixtures/** -text
+
+# The build script parses this table, so its bytes are the crate's own input.
+# It is minified onto one line today and so has nothing to convert; the pin is
+# there so that regenerating it in a form that has line endings cannot make the
+# build platform-dependent.
+assets/html5_entities.json -text

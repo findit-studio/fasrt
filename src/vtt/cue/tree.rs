@@ -140,7 +140,7 @@ const _: () = {
 pub struct TagNode<'a, C = Vec<Node<'a>>> {
   tag: Tag,
   classes: &'a str,
-  annotation: Option<&'a str>,
+  annotation: Option<Annotation<'a>>,
   children: C,
 }
 
@@ -154,7 +154,7 @@ pub struct TagNode<'a, C = Vec<Node<'a>>> {
 pub struct TagNode<'a, C> {
   tag: Tag,
   classes: &'a str,
-  annotation: Option<&'a str>,
+  annotation: Option<Annotation<'a>>,
   children: C,
 }
 
@@ -389,54 +389,62 @@ impl<'a, C> TagNode<'a, C> {
     self
   }
 
-  /// Returns the annotation text (for `<v>` and `<lang>`), `None` if
-  /// absent.
+  /// Returns the node's annotation — `<v>`'s voice, `<lang>`'s language —
+  /// `None` if the tag declared none.
+  ///
+  /// [`Annotation::normalize`] gives W3C WebVTT §6.4's value for it, with the
+  /// character references decoded and the whitespace runs collapsed;
+  /// [`Annotation::as_raw`] gives the text the cue spelled, which is what the
+  /// node is serialized from. For a `<lang>`, [`declared_language`] answers the
+  /// same question in the shape §6.4's language stack asks it.
+  ///
+  /// [`declared_language`]: Self::declared_language
   ///
   /// ```rust
   /// # #[cfg(any(feature = "alloc", feature = "std"))]
   /// # {
-  /// use fasrt::vtt::cue::{TagNode, Tag};
+  /// use fasrt::vtt::cue::{Annotation, TagNode, Tag};
   ///
-  /// let node = TagNode::new(Tag::Voice).with_annotation(Some("Speaker"));
-  /// assert_eq!(node.annotation(), Some("Speaker"));
+  /// let node = TagNode::new(Tag::Voice).with_annotation(Some(Annotation::new("Speaker")));
+  /// assert_eq!(node.annotation().map(Annotation::normalize), Some("Speaker"));
   /// # }
   /// ```
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn annotation(&self) -> Option<&'a str> {
-    self.annotation
+  pub const fn annotation(&self) -> Option<&Annotation<'a>> {
+    self.annotation.as_ref()
   }
 
-  /// Sets the annotation text (builder pattern).
+  /// Sets the annotation (builder pattern).
   ///
   /// ```rust
   /// # #[cfg(any(feature = "alloc", feature = "std"))]
   /// # {
-  /// use fasrt::vtt::cue::{TagNode, Tag};
+  /// use fasrt::vtt::cue::{Annotation, TagNode, Tag};
   ///
-  /// let node = TagNode::new(Tag::Lang).with_annotation(Some("en"));
-  /// assert_eq!(node.annotation(), Some("en"));
+  /// let node = TagNode::new(Tag::Lang).with_annotation(Some(Annotation::new("en")));
+  /// assert_eq!(node.annotation().map(Annotation::as_raw), Some("en"));
   /// # }
   /// ```
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn with_annotation(mut self, annotation: Option<&'a str>) -> Self {
+  pub fn with_annotation(mut self, annotation: Option<Annotation<'a>>) -> Self {
     self.annotation = annotation;
     self
   }
 
-  /// Sets the annotation text.
+  /// Sets the annotation.
   ///
   /// ```rust
   /// # #[cfg(any(feature = "alloc", feature = "std"))]
   /// # {
-  /// use fasrt::vtt::cue::{TagNode, Tag};
+  /// use fasrt::vtt::cue::{Annotation, TagNode, Tag};
   ///
   /// let mut node = TagNode::new(Tag::Voice);
-  /// node.set_annotation(Some("Roger"));
-  /// assert_eq!(node.annotation(), Some("Roger"));
+  /// node.set_annotation(Some(Annotation::new("Roger")));
+  /// assert_eq!(node.annotation().map(Annotation::as_raw), Some("Roger"));
   /// # }
   /// ```
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn set_annotation(&mut self, annotation: Option<&'a str>) -> &mut Self {
+  pub fn set_annotation(&mut self, annotation: Option<Annotation<'a>>) -> &mut Self {
     self.annotation = annotation;
     self
   }
@@ -453,40 +461,40 @@ impl<'a, C> TagNode<'a, C> {
   /// [`CueText::nodes_with_language`] walks a whole tree with this rule
   /// applied; use this accessor when descending the tree yourself.
   ///
-  /// # The value is the annotation as stored
+  /// # The value is §6.4's annotation
   ///
-  /// What is returned is [`annotation`](Self::annotation) verbatim. §6.4's
-  /// annotation state also decodes character references and collapses runs of
-  /// internal whitespace to a single space, neither of which this parser does:
-  /// both need an owned string, and an annotation is a slice borrowed from the
-  /// cue. So `<lang en&#x2D;US>` declares `"en&#x2D;US"` and not `"en-US"`.
-  /// That holds for every annotation the crate reports, `<v>`'s voice
-  /// included. What this accessor settles is the *scope*: which nodes a
-  /// `<lang>` covers.
+  /// What §6.4 pushes is the annotation its annotation state produced, so what
+  /// is returned is [`Annotation::normalize`]: `<lang en&#x2D;US>` declares
+  /// `"en-US"`, and `<lang en` + TAB + `US>` declares `"en US"`. Read
+  /// [`annotation`](Self::annotation) for the text the cue spelled.
+  ///
+  /// Without `alloc` a decoded language has nowhere to live, so the stored text
+  /// is returned instead; [`Annotation::requires_normalization`] on the
+  /// annotation says when the two differ.
   ///
   /// ```rust
   /// # #[cfg(any(feature = "alloc", feature = "std"))]
   /// # {
-  /// use fasrt::vtt::cue::{TagNode, Tag};
+  /// use fasrt::vtt::cue::{Annotation, TagNode, Tag};
   ///
-  /// let lang = TagNode::new(Tag::Lang).with_annotation(Some("en"));
+  /// let lang = TagNode::new(Tag::Lang).with_annotation(Some(Annotation::new("en")));
   /// assert_eq!(lang.declared_language(), Some("en"));
   ///
   /// // `<lang>` with no annotation clears the enclosing language.
   /// assert_eq!(TagNode::new(Tag::Lang).declared_language(), Some(""));
   ///
   /// // Every other tag declares nothing — `<v>`'s annotation is a voice.
-  /// let voice = TagNode::new(Tag::Voice).with_annotation(Some("Esme"));
+  /// let voice = TagNode::new(Tag::Voice).with_annotation(Some(Annotation::new("Esme")));
   /// assert_eq!(voice.declared_language(), None);
   /// # }
   /// ```
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn declared_language(&self) -> Option<&'a str> {
+  pub fn declared_language(&self) -> Option<&str> {
     match self.tag {
-      Tag::Lang => match self.annotation {
-        Some(language) => Some(language),
-        None => Some(""),
-      },
+      Tag::Lang => Some(match &self.annotation {
+        Some(language) => language.normalize(),
+        None => "",
+      }),
       _ => None,
     }
   }
@@ -646,14 +654,14 @@ impl<'a, C: AsRef<[Node<'a>]>> fmt::Display for TagNode<'a, C> {
   /// ```rust
   /// # #[cfg(any(feature = "alloc", feature = "std"))]
   /// # {
-  /// use fasrt::vtt::cue::{TagNode, Node, CueStr, Tag};
+  /// use fasrt::vtt::cue::{Annotation, TagNode, Node, CueStr, Tag};
   ///
   /// let node = TagNode::new(Tag::Bold)
   ///   .with_children(vec![Node::Text(CueStr::borrowed("hello"))]);
   /// assert_eq!(node.to_string(), "<b>hello</b>");
   ///
   /// let node = TagNode::new(Tag::Lang)
-  ///   .with_annotation(Some("en"))
+  ///   .with_annotation(Some(Annotation::new("en")))
   ///   .with_children(vec![Node::Text(CueStr::borrowed("world"))]);
   /// assert_eq!(node.to_string(), "<lang en>world</lang>");
   ///
@@ -668,8 +676,10 @@ impl<'a, C: AsRef<[Node<'a>]>> fmt::Display for TagNode<'a, C> {
     if !self.classes.is_empty() {
       write!(f, ".{}", self.classes)?;
     }
-    if let Some(ann) = self.annotation {
-      write!(f, " {}", ann)?;
+    // The annotation goes back as the cue spelled it. Its normalized form may
+    // hold a `>` that a `&gt;` stood for, which would end the tag here.
+    if let Some(annotation) = &self.annotation {
+      write!(f, " {}", annotation.as_raw())?;
     }
     f.write_str(">")?;
 
@@ -1003,7 +1013,7 @@ impl<'a, C> CueText<'a, C> {
   /// The language is the annotation of the nearest enclosing `<lang>`, and
   /// `None` where none encloses the node — §6.4's empty stack. A `<lang>` node
   /// carries the language it declares, since §6.4 pushes before it attaches.
-  /// The annotation is reported as stored, with the normalization caveat
+  /// The value is §6.4's annotation, normalized as
   /// [`TagNode::declared_language`] documents.
   ///
   /// `None` and `Some("")` are different answers and a caller must not merge
@@ -1070,7 +1080,7 @@ impl<'a, C> CueText<'a, C> {
 pub struct NodesWithLanguage<'t, 'a> {
   /// One frame per open ancestor, each holding the siblings still to visit
   /// and the language applicable inside that ancestor.
-  stack: Vec<(core::slice::Iter<'t, Node<'a>>, Option<&'a str>)>,
+  stack: Vec<(core::slice::Iter<'t, Node<'a>>, Option<&'t str>)>,
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
@@ -1089,7 +1099,7 @@ impl<'t, 'a> NodesWithLanguage<'t, 'a> {
 impl<'t, 'a> Iterator for NodesWithLanguage<'t, 'a> {
   /// A node and the language applicable to it: the top of §6.4's language
   /// stack, or `None` while that stack is empty.
-  type Item = (&'t Node<'a>, Option<&'a str>);
+  type Item = (&'t Node<'a>, Option<&'t str>);
 
   fn next(&mut self) -> Option<Self::Item> {
     loop {
@@ -1329,7 +1339,7 @@ impl<'a> Builder<'a> {
 
   /// Opens a tag. Returns `false` when it lands past `max_depth`, in which
   /// case only its name is kept and no node is materialized for it.
-  fn open(&mut self, tag: Tag, classes: &'a str, annotation: Option<&'a str>) -> bool {
+  fn open(&mut self, tag: Tag, classes: &'a str, annotation: Option<Annotation<'a>>) -> bool {
     if self.over.is_empty() && self.stack.len() < self.max_depth {
       self.stack.push(
         TagNode::new(tag)
