@@ -2,6 +2,31 @@
 
 FIXED
 
+- **Cue text `<ruby>` trees now follow W3C WebVTT §6.4.** Two branches of the
+  cue text parsing rules were read more loosely than the spec writes them, and
+  both are on ruby paths:
+
+  - `<rt>` attached whenever a `<ruby>` was open anywhere above it. §6.4 says
+    "If *current* is a WebVTT Ruby Object, then attach a WebVTT Ruby Text
+    Object" — the test is on the current node. `<ruby><b><rt>x</rt></b></ruby>`
+    used to build `ruby > b > rt > "x"`; it now builds `ruby > b > "x"`, with
+    the `<rt>` ignored and its text left in the `<b>`.
+  - Every end tag first closed any open `<rt>`. §6.4 closes an open `<rt>`
+    from `</ruby>` alone, and that clause closes the `<ruby>` too, in one
+    step; every other unmatched end tag is ignored.
+    `<ruby><rt>x</b><i>y` used to build `ruby > [rt > "x", i > "y"]`; it now
+    builds `ruby > rt > ["x", i > "y"]`, because `</b>` names nothing that is
+    open.
+
+  A token the spec ignores also costs no nesting depth, so a cue whose §6.4
+  tree fits `vtt::cue::Options::max_depth` is no longer refused for a level it
+  does not have. Cue text without `<ruby>`/`<rt>` is unaffected: enumerating
+  all 5 380 840 payloads of up to seven tokens over
+  `<ruby> </ruby> <rt> </rt> <b> </b> <i> </i> x` finds 354 654 that changed,
+  every one of them in one of the two branches above, and the WPT cue-text
+  suites are unchanged — every ruby case they carry puts `<rt>` directly
+  inside `<ruby>`, where both readings agree.
+
 - **Deeply nested cue text no longer aborts the process.**
   `vtt::cue::CueText::parse` now bounds the tree it builds at
   `vtt::cue::DEFAULT_MAX_DEPTH` (16). WebVTT places no limit on cue payload
