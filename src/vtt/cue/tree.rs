@@ -957,8 +957,12 @@ impl<'a> CueText<'a> {
           classes,
           annotation,
         } => {
-          // Per spec: <rt> is only allowed inside <ruby>
-          if tag == Tag::RubyText && !builder.in_ruby() {
+          // §6.4, start tag, tag name "rt": "If current is a WebVTT Ruby
+          // Object, then attach a WebVTT Ruby Text Object." The test is on
+          // `current`, not on having a `<ruby>` ancestor, so `<ruby><b><rt>`
+          // attaches nothing — the token is ignored and `current` stays
+          // `<b>`. Every other recognized tag attaches unconditionally.
+          if tag == Tag::RubyText && builder.current_tag() != Some(Tag::Ruby) {
             continue;
           }
           if !builder.open(tag, classes, annotation) {
@@ -969,23 +973,27 @@ impl<'a> CueText<'a> {
           }
         }
         CueToken::EndTag(tag) => {
-          // W3C WebVTT spec §6.4 end tag processing:
-
-          // 1. </rt> requires a <ruby> ancestor
-          if tag == Tag::RubyText && !builder.in_ruby() {
-            continue;
+          // §6.4, end tag. The seven (tag name, current-node class) pairs that
+          // mean "let current be the parent node of current" — and the "lang"
+          // clause that follows them, which differs only in also popping the
+          // language stack this parser does not model — all say one thing
+          // about the tree: the end tag names the current node's own class.
+          match builder.current_tag() {
+            Some(current) if current == tag => builder.close_current(),
+            // "Otherwise, if the tag name of the end tag token is "ruby" and
+            // current is a WebVTT Ruby Text Object, then let current be the
+            // parent node of the parent node of current." A Ruby Text Object
+            // is attached only while current is a Ruby Object, so its parent
+            // is always that `<ruby>`: one `</ruby>` closes both. This is the
+            // only end tag that closes a node it does not name.
+            Some(Tag::RubyText) if tag == Tag::Ruby => {
+              builder.close_current();
+              builder.close_current();
+            }
+            // "Otherwise, ignore the token." An unmatched end tag closes
+            // nothing — in particular it does not close an open `<rt>`.
+            _ => {}
           }
-
-          // 2. Generate implied end tags: while top of stack is <rt>, close it
-          while builder.current_tag() == Some(Tag::RubyText) {
-            builder.close_current();
-          }
-
-          // 3. If current node matches, pop it
-          if builder.current_tag() == Some(tag) {
-            builder.close_current();
-          }
-          // Otherwise: end tag is ignored (spec says jump to next token)
         }
       }
     }
@@ -1010,13 +1018,6 @@ struct Builder<'a> {
   root: Vec<Node<'a>>,
   stack: Vec<TagNode<'a>>,
   over: Vec<Tag>,
-  /// The number of open `<ruby>` ancestors across both stacks — the O(1) form
-  /// of the spec's "has a `<ruby>` ancestor" test.
-  ///
-  /// Every push through [`open`](Self::open) that increments this is matched
-  /// by exactly one pop through [`close_current`](Self::close_current) that
-  /// decrements it, so the count cannot go below zero.
-  ruby_depth: usize,
   max_depth: usize,
 }
 
@@ -1027,23 +1028,20 @@ impl<'a> Builder<'a> {
       root: Vec::new(),
       stack: Vec::new(),
       over: Vec::new(),
-      ruby_depth: 0,
       max_depth,
     }
   }
 
-  /// The innermost open tag, or `None` at the root.
+  /// The tag of §6.4's `current` node, or `None` when `current` is the root.
+  ///
+  /// An over-deep tag materializes no node, but it is still the node the
+  /// algorithm calls `current`, so `over` is consulted before `stack`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn current_tag(&self) -> Option<Tag> {
     match self.over.last() {
       Some(tag) => Some(*tag),
       None => self.stack.last().map(|node| node.tag()),
     }
-  }
-
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  fn in_ruby(&self) -> bool {
-    self.ruby_depth > 0
   }
 
   /// Appends a leaf to the innermost materialized node.
@@ -1058,10 +1056,6 @@ impl<'a> Builder<'a> {
   /// Opens a tag. Returns `false` when it lands past `max_depth`, in which
   /// case only its name is kept and no node is materialized for it.
   fn open(&mut self, tag: Tag, classes: &'a str, annotation: Option<&'a str>) -> bool {
-    if tag == Tag::Ruby {
-      self.ruby_depth += 1;
-    }
-
     if self.over.is_empty() && self.stack.len() < self.max_depth {
       self.stack.push(
         TagNode::new(tag)
@@ -1079,18 +1073,11 @@ impl<'a> Builder<'a> {
   /// over-deep tag has no node to attach: its children were appended to the
   /// innermost materialized node as they arrived, and stay there.
   fn close_current(&mut self) {
-    let tag = match self.over.pop() {
-      Some(tag) => tag,
-      None => {
-        let Some(node) = self.stack.pop() else { return };
-        let tag = node.tag();
-        self.push_leaf(Node::Tag(node));
-        tag
-      }
-    };
-
-    if tag == Tag::Ruby {
-      self.ruby_depth -= 1;
+    if self.over.pop().is_some() {
+      return;
+    }
+    if let Some(node) = self.stack.pop() {
+      self.push_leaf(Node::Tag(node));
     }
   }
 

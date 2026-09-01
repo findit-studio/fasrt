@@ -57,7 +57,7 @@ fasrt = "0.3"
   - **`CueParser`**: logos DFA-backed, zero-alloc token stream (`no_std`)
   - **`CueText`**: W3C spec-compliant DOM tree builder with `Node`/`TagNode` types (`alloc`/`std`)
   - Tags: `<b>`, `<i>`, `<u>`, `<c>`, `<ruby>`, `<rt>`, `<v>`, `<lang>`, with classes and annotations
-  - W3C tree building algorithm: implied end tags, `<rt>` scoping, unterminated tag handling
+  - W3C tree building algorithm (§6.4): `<rt>` scoped on the current node, `</ruby>` closing an open `<rt>` along with its `<ruby>`, unterminated tag handling
   - Bounded nesting depth (`cue::Options::max_depth`, default 16), so a hostile cue cannot overflow the stack while the tree is built, walked or dropped — every walk at the default limit is held to a 128 KiB thread by the test suite; `CueText::try_parse` refuses such input rather than flattening it
   - Full HTML5 named character reference support (2,231 entities via [`phf`](https://docs.rs/phf) perfect hash map)
   - Numeric (`&#32;`) and hexadecimal (`&#x20;`) character references

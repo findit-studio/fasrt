@@ -597,6 +597,126 @@ fn tree_into_children() {
   assert_eq!(children.len(), 1);
 }
 
+// ── W3C §6.4 ruby conformance ────────────────────────────────────────────────
+//
+// §6.4 scopes `<rt>` on the *current* node ("If current is a WebVTT Ruby
+// Object, then attach a WebVTT Ruby Text Object"), and closes an open `<rt>`
+// from one end tag only — `</ruby>`, which closes the `<ruby>` along with it.
+// Every ruby case in the shipped WPT `tree-building` fixtures puts `<rt>`
+// directly inside `<ruby>`, where an ancestor reading of the same rules agrees;
+// these fixtures are the cases that discriminate.
+
+/// Whether any node in the tree carries the given tag. Walked iteratively, so
+/// the assertion is not itself a recursive walk of the tree under test.
+fn contains_tag(tree: &CueText<'_>, wanted: Tag) -> bool {
+  let mut work: Vec<&Node<'_>> = tree.children().iter().collect();
+  while let Some(node) = work.pop() {
+    if let Node::Tag(tag) = node {
+      if tag.tag() == wanted {
+        return true;
+      }
+      work.extend(tag.children());
+    }
+  }
+  false
+}
+
+/// `<rt>` attaches only while `current` is the `<ruby>` itself. An intervening
+/// `<b>` makes it a token §6.4 ignores, so its text lands in the `<b>` and no
+/// ruby text node is built at all.
+#[test]
+fn rt_attaches_only_when_current_is_ruby() {
+  let tree = CueText::parse("<ruby><b><rt>x</rt></b></ruby>");
+
+  assert_eq!(tree.to_string(), "<ruby><b>x</b></ruby>");
+  assert_eq!(tag_depth(&tree), 2);
+  assert!(
+    !contains_tag(&tree, Tag::RubyText),
+    "an <rt> whose current node is <b> must not be attached"
+  );
+}
+
+/// A second `<rt>` inside an open `<rt>` is ignored for the same reason:
+/// `current` is the ruby text object, not a ruby object.
+#[test]
+fn rt_inside_rt_is_ignored() {
+  let tree = CueText::parse("<ruby><rt>a<rt>b</ruby>");
+
+  assert_eq!(tree.to_string(), "<ruby><rt>ab</rt></ruby>");
+  assert_eq!(tag_depth(&tree), 2);
+}
+
+/// An end tag that does not name the current node is ignored — it does not
+/// close an open `<rt>` on the way. What follows it stays inside the `<rt>`,
+/// one level deeper than a drain-before-every-end-tag reading builds.
+#[test]
+fn an_unmatched_end_tag_does_not_close_an_open_rt() {
+  let tree = CueText::parse("<ruby><rt>x</b><i>y");
+
+  assert_eq!(tree.to_string(), "<ruby><rt>x<i>y</i></rt></ruby>");
+  assert_eq!(tag_depth(&tree), 3);
+
+  let ruby = match &tree.children()[0] {
+    Node::Tag(node) => node,
+    other => panic!("expected a <ruby> node, got {other:?}"),
+  };
+  assert_eq!(
+    ruby.children().len(),
+    1,
+    "</b> must not have closed the <rt> and made <i> its sibling"
+  );
+}
+
+/// `</ruby>` is the one end tag that closes a node it does not name: with an
+/// `<rt>` open it closes both, and `current` returns to the ruby's parent.
+#[test]
+fn end_ruby_closes_an_open_rt_and_the_ruby() {
+  let tree = CueText::parse("<ruby><rt>x</ruby>y");
+
+  assert_eq!(tree.to_string(), "<ruby><rt>x</rt></ruby>y");
+  assert_eq!(tree.children().len(), 2);
+  assert!(matches!(&tree.children()[1], Node::Text(t) if t.normalize() == "y"));
+}
+
+/// §6.4's end tag step in full: an end tag closes the current node when it
+/// names it (the seven listed pairs, plus the "lang" clause that follows
+/// them), `</ruby>` also closes an open `<rt>` together with its `<ruby>`, and
+/// every other end tag is ignored.
+#[test]
+fn end_tag_branch_table() {
+  const CASES: &[(&str, &str)] = &[
+    // The end tag names the current node.
+    ("<c>x</c>y", "<c>x</c>y"),
+    ("<i>x</i>y", "<i>x</i>y"),
+    ("<b>x</b>y", "<b>x</b>y"),
+    ("<u>x</u>y", "<u>x</u>y"),
+    ("<ruby>x</ruby>y", "<ruby>x</ruby>y"),
+    ("<ruby><rt>x</rt>y</ruby>", "<ruby><rt>x</rt>y</ruby>"),
+    ("<v a>x</v>y", "<v a>x</v>y"),
+    ("<lang en>x</lang>y", "<lang en>x</lang>y"),
+    // "ruby" while current is a Ruby Text Object: closes both.
+    ("<ruby><rt>x</ruby>y", "<ruby><rt>x</rt></ruby>y"),
+    // Otherwise, ignore the token — an open <rt> survives every other end tag.
+    ("<ruby><rt>x</b>y</ruby>", "<ruby><rt>xy</rt></ruby>"),
+    ("<ruby><rt>x</i>y</ruby>", "<ruby><rt>xy</rt></ruby>"),
+    ("<ruby><rt>x</u>y</ruby>", "<ruby><rt>xy</rt></ruby>"),
+    ("<ruby><rt>x</c>y</ruby>", "<ruby><rt>xy</rt></ruby>"),
+    ("<ruby><rt>x</v>y</ruby>", "<ruby><rt>xy</rt></ruby>"),
+    ("<ruby><rt>x</lang>y</ruby>", "<ruby><rt>xy</rt></ruby>"),
+    // …including an end tag with nothing of its name open.
+    ("stray </b> end tag", "stray  end tag"),
+    ("<ruby></rt>x</ruby>", "<ruby>x</ruby>"),
+  ];
+
+  for (input, expected) in CASES {
+    assert_eq!(
+      CueText::parse(input).to_string(),
+      *expected,
+      "input: {input:?}"
+    );
+  }
+}
+
 // ── Malformed timestamp rejection tests ──────────────────────────────────────
 //
 // These verify that malformed cue-text timestamp tags are safely rejected
@@ -835,20 +955,40 @@ fn max_depth_zero_drops_every_tag() {
   assert_eq!(tree_text(&tree), "bold and italic");
 }
 
-/// `<rt>` is only legal inside `<ruby>`, and the ancestor test has to see a
-/// `<ruby>` that was itself pushed past the limit.
+/// `<rt>` attaches only while `current` is a `<ruby>`, and that test has to
+/// see a `<ruby>` that was itself pushed past the limit — an over-deep tag
+/// materializes no node but is still the current node.
 #[test]
-fn ruby_ancestor_is_seen_past_the_limit() {
+fn the_current_node_is_seen_past_the_limit() {
   let opts = Options::new().with_max_depth(1);
   let tree = CueText::parse_with("<b><ruby>base<rt>note</rt></ruby></b>", opts);
 
   assert_eq!(tree_text(&tree), "basenote");
   assert_eq!(tag_depth(&tree), 1);
 
-  // A bare <rt> with no <ruby> ancestor is still dropped, at any depth.
+  // An over-deep `<b>` is just as much the current node, so the `<rt>` inside
+  // it is ignored past the limit exactly as it is within it.
+  let scoped = CueText::parse_with("<ruby><b><rt>note</rt></b></ruby>", opts);
+  assert_eq!(scoped.to_string(), "<ruby>note</ruby>");
+  assert!(!contains_tag(&scoped, Tag::RubyText));
+
+  // A bare <rt> with no <ruby> open is still dropped, at any depth.
   let bare = CueText::parse_with("<rt>note</rt>", opts);
   assert_eq!(bare.children().len(), 1);
   assert!(matches!(&bare.children()[0], Node::Text(_)));
+}
+
+/// A token §6.4 ignores costs no depth. Attaching `<rt>` on an ancestor test
+/// spent a level of the budget on a node the spec never builds, so a cue whose
+/// spec tree fits the limit could be refused for nesting it does not have.
+#[test]
+fn an_ignored_rt_costs_no_depth() {
+  let opts = Options::new().with_max_depth(2);
+  let tree = CueText::try_parse_with("<ruby><b><rt>x</rt></b></ruby>", opts)
+    .expect("§6.4 builds this cue two deep, which is within the limit");
+
+  assert_eq!(tree.to_string(), "<ruby><b>x</b></ruby>");
+  assert_eq!(tag_depth(&tree), 2);
 }
 
 /// Everything shallower than the limit parses exactly as it did before the
@@ -863,6 +1003,8 @@ fn ordinary_cues_are_unchanged_by_the_limit() {
     "<lang en>hello</lang>",
     "<ruby>base<rt>note</rt></ruby>",
     "<ruby>base<rt>one<rt>two</ruby>",
+    "<ruby><b><rt>scoped on current</rt></b></ruby>",
+    "<ruby><rt>survives</b><i>an unmatched end tag",
     "<b><i><u><c>four deep</c></u></i></b>",
     "unclosed <b>bold",
     "stray </i> end tag",
