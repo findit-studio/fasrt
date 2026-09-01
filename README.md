@@ -58,6 +58,8 @@ fasrt = "0.3"
   - **`CueText`**: W3C spec-compliant DOM tree builder with `Node`/`TagNode` types (`alloc`/`std`)
   - Tags: `<b>`, `<i>`, `<u>`, `<c>`, `<ruby>`, `<rt>`, `<v>`, `<lang>`, with classes and annotations
   - W3C tree building algorithm (§6.4): `<rt>` scoped on the current node, `</ruby>` closing an open `<rt>` along with its `<ruby>`, unterminated tag handling
+  - §6.4's list of applicable classes (`TagNode::classes`), which excludes the empty classes between adjacent `.` separators — `TagNode::classes_raw` keeps the source text
+  - §6.4's applicable language, derived from the tree rather than stored on every node: `TagNode::declared_language` for one step of a descent, `CueText::nodes_with_language` for the whole tree in document order
   - Bounded nesting depth (`cue::Options::max_depth`, default 16), so a hostile cue cannot overflow the stack while the tree is built, walked or dropped — every walk at the default limit is held to a 128 KiB thread by the test suite; `CueText::try_parse` refuses such input rather than flattening it
   - Full HTML5 named character reference support (2,231 entities via [`phf`](https://docs.rs/phf) perfect hash map)
   - Numeric (`&#32;`) and hexadecimal (`&#x20;`) character references

@@ -2,6 +2,33 @@
 
 FIXED
 
+- **Cue text class lists now exclude the empty string, as W3C WebVTT §6.4
+  requires.** §6.4 attaches a node whose "list of applicable classes" is the
+  start tag's classes *"excluding any classes that are the empty string"*, but
+  `vtt::cue::TagNode::classes` returned the raw dot-separated slice — so
+  `<c.a..b>` gave `"a..b"`, and a consumer splitting it on `.` saw an empty
+  class the spec says cannot exist. `classes` now returns that list as a lazy
+  `vtt::cue::Classes` iterator; the raw slice keeps a name that says it is raw.
+  The crate's own WPT conformance harness was one of the consumers taking the
+  trap: it spelled `<c.a..b>` as `class="a  b"` where §6.4's serialization is
+  `class="a b"`.
+
+- **Cue text tags now end on all four of §6.4's whitespace characters.** §6.4's
+  tokenizer leaves the tag-name and class-list states on TAB, LF, FF or SPACE;
+  this parser recognized only TAB and SPACE. A cue payload spans lines, so an
+  LF inside a tag is reachable input, and the consequences reached both faces
+  above: `<lang` + LF + `en>` was discarded as an unknown tag, taking the whole
+  language scope with it, and `<c.a` + LF + `note>` kept `"a\nnote"` as a
+  single class. Both are now read as §6.4 reads them, in terminated and
+  unterminated tags alike. The annotation is trimmed over ASCII whitespace —
+  those four plus CR, which ends no state but is still trimmed — rather than
+  over Unicode's whitespace set, so a NO-BREAK SPACE around a `<v>` voice is
+  text rather than padding. §6.4's remaining annotation-state work — decoding
+  character references and collapsing internal whitespace runs — still is not
+  done: both need an owned string where an annotation is a slice borrowed from
+  the cue. No cue body in the crate's fixture corpus reaches any of these
+  shapes, and the WPT suites are unchanged.
+
 - **Cue text `<ruby>` trees now follow W3C WebVTT §6.4.** Two branches of the
   cue text parsing rules were read more loosely than the spec writes them, and
   both are on ruby paths:
@@ -59,6 +86,51 @@ FEATURES
 - Add `vtt::cue::CueText::try_parse` and `try_parse_with`, which refuse
   over-deep input with the new `error::MaxDepthExceededError` instead of
   flattening it.
+- Add `vtt::cue::Classes`, the lazy iterator over §6.4's list of applicable
+  classes. `Classes::new` reads it straight from a `vtt::cue::CueToken::StartTag`'s
+  raw class list, so a token-level consumer needs no tree.
+- Add `vtt::cue::TagNode::classes_raw`, the raw dot-separated class list
+  exactly as it appeared — the source text `classes` used to return.
+- Add `vtt::cue::TagNode::declared_language`, the language a node makes
+  applicable to its own subtree: §6.4's language-stack push, which only
+  `<lang>` performs. An annotation-less `<lang>` pushes the empty string, so it
+  clears an enclosing language rather than inheriting it.
+- Add `vtt::cue::CueText::nodes_with_language` and `vtt::cue::NodesWithLanguage`,
+  a document-order walk pairing every node with the language §6.4 makes
+  applicable to it. §6.4's language stack is exactly the chain of enclosing
+  `<lang>` nodes, so the language is derived from the tree rather than stored on
+  each node, where an edit through `children_mut` could leave it stale. The walk
+  keeps its ancestors on the heap and so costs no stack in the depth of the tree.
+
+  The language is an `Option<&str>`, and the two empty answers are different.
+  `None` is an empty language stack: nothing in the cue speaks to that node's
+  language, so a fallback from outside the cue — a track's language, say —
+  applies to it. `Some("")` is an annotation-less `<lang>`, which pushed the
+  empty string and thereby said the subtree is in no known language, clearing
+  that fallback rather than deferring to it.
+
+  Two limits of that answer are documented and pinned by fixtures. What these
+  faces settle is the *scope* — which nodes a `<lang>` covers — and the scope is
+  exact. The *value* is the annotation as the parser stores it: this crate keeps
+  annotations verbatim and does not run §6.4's annotation-state normalization,
+  so `<lang en&#x2D;US>` declares `"en&#x2D;US"` rather than `"en-US"`, for
+  `<v>`'s voice as much as for `<lang>` — that is the tokenizer's half of §6.4
+  and closing it would have to move `annotation` off `&str`. And the walk
+  answers for the tree it is given: a `<lang>` that `Options::max_depth` dropped
+  is not in the tree, so its scope is not either, exactly as its classes and
+  markup are not. `try_parse` refuses input that deep rather than returning a
+  tree that dropped part of it.
+
+CHANGED
+
+- **`vtt::cue::TagNode::classes` returns `vtt::cue::Classes` rather than
+  `&str`.** This is the class-list fix above, and it is a breaking change to a
+  published signature: it was taken deliberately, because the trap was the name
+  — `classes()` reads as "the classes" and returned something that is not the
+  list. Every call site fails to compile rather than changing meaning silently.
+  To migrate: `node.classes()` → `node.classes_raw()` for the old return value,
+  or iterate it for §6.4's list. `with_classes` and `set_classes` are unchanged
+  and still take the raw dot-separated form.
 
 # [0.3.0](https://github.com/findit-studio/fasrt/releases/tag/v0.3.0) (August 31st, 2026)
 
