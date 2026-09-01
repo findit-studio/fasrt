@@ -77,21 +77,21 @@ enum RawCueToken<'a> {
   EndLang,
 
   // ── start tags (with optional `.classes` / ` annotation`) ─────────────
-  #[regex(r"<b[. \t][^>]*>|<b>")]
+  #[regex(r"<b[. \t\n\x0C][^>]*>|<b>")]
   StartBold(&'a str),
-  #[regex(r"<i[. \t][^>]*>|<i>")]
+  #[regex(r"<i[. \t\n\x0C][^>]*>|<i>")]
   StartItalic(&'a str),
-  #[regex(r"<u[. \t][^>]*>|<u>")]
+  #[regex(r"<u[. \t\n\x0C][^>]*>|<u>")]
   StartUnderline(&'a str),
-  #[regex(r"<c[. \t][^>]*>|<c>")]
+  #[regex(r"<c[. \t\n\x0C][^>]*>|<c>")]
   StartClass(&'a str),
-  #[regex(r"<ruby[. \t][^>]*>|<ruby>")]
+  #[regex(r"<ruby[. \t\n\x0C][^>]*>|<ruby>")]
   StartRuby(&'a str),
-  #[regex(r"<rt[. \t][^>]*>|<rt>")]
+  #[regex(r"<rt[. \t\n\x0C][^>]*>|<rt>")]
   StartRubyText(&'a str),
-  #[regex(r"<v[. \t][^>]*>|<v>")]
+  #[regex(r"<v[. \t\n\x0C][^>]*>|<v>")]
   StartVoice(&'a str),
-  #[regex(r"<lang[. \t][^>]*>|<lang>")]
+  #[regex(r"<lang[. \t\n\x0C][^>]*>|<lang>")]
   StartLang(&'a str),
 
   // ── timestamp tag ─────────────────────────────────────────────────────
@@ -443,7 +443,12 @@ pub enum CueToken<'a> {
   StartTag {
     /// The tag name.
     tag: Tag,
-    /// Dot-separated class names (e.g., `"loud.important"`), empty if none.
+    /// The raw dot-separated class list (e.g., `"loud.important"`), empty if
+    /// none.
+    ///
+    /// This is the source text, not §6.4's list of applicable classes, which
+    /// excludes the empty strings between adjacent separators. Read it with
+    /// [`Classes::new`].
     classes: &'a str,
     /// Annotation text (for `<v>` and `<lang>`), `None` if absent.
     annotation: Option<&'a str>,
@@ -491,6 +496,21 @@ impl<'a> CueParser<'a> {
   }
 }
 
+/// The whitespace §6.4 ends a tag name or class list on, sending the tokenizer
+/// into its start tag annotation state: TAB, LF, FF and SPACE. All four are
+/// one byte, so the index of one is always a `str` boundary.
+///
+/// Deliberately *not* [`ASCII_WHITESPACE`]: §6.4's state transitions list these
+/// four, while the trim that ends the annotation state is over Infra's ASCII
+/// whitespace, which also has CR.
+const ANNOTATION_DELIMITERS: [char; 4] = ['\t', '\n', '\u{000C}', ' '];
+
+/// [Infra's ASCII whitespace][infra], which §6.4 trims from an annotation:
+/// the four delimiters above plus U+000D CARRIAGE RETURN.
+///
+/// [infra]: https://infra.spec.whatwg.org/#ascii-whitespace
+const ASCII_WHITESPACE: [char; 5] = ['\t', '\n', '\u{000C}', '\r', ' '];
+
 /// Extract classes and annotation from the portion of a start-tag slice
 /// that follows the tag name (i.e. everything between `<tagname` and `>`).
 ///
@@ -502,9 +522,13 @@ fn parse_tag_attrs(after_name: &str) -> (&str, Option<&str>) {
     return ("", None);
   }
 
-  let (tag_rest, annotation) = match after_name.find([' ', '\t']) {
+  let (tag_rest, annotation) = match after_name.find(ANNOTATION_DELIMITERS) {
     Some(idx) => {
-      let ann = after_name[idx + 1..].trim();
+      // §6.4 ends the annotation state by removing leading and trailing ASCII
+      // whitespace from the buffer — Infra's five, not Unicode's set. It also
+      // collapses internal runs to a single space, which this parser cannot do
+      // while the annotation is a slice borrowed from the cue.
+      let ann = after_name[idx + 1..].trim_matches(ASCII_WHITESPACE);
       (
         &after_name[..idx],
         if ann.is_empty() { None } else { Some(ann) },
@@ -616,30 +640,38 @@ fn try_parse_unterminated<'a>(slice: &'a str) -> Option<CueToken<'a>> {
     return None;
   }
 
-  // Try known start tags
+  // Try known start tags. The byte that may follow the name is the class
+  // separator or one of §6.4's four annotation delimiters — the same set the
+  // DFA accepts for a terminated tag.
+  const DELIM: [u8; 5] = [b'.', b'\t', b'\n', 0x0C, b' '];
+  let follows_name = |byte: u8| DELIM.contains(&byte);
+
   let (tag, name_len) = match inner.as_bytes() {
-    [b'b', b'.' | b' ' | b'\t', ..] | [b'b'] => (Tag::Bold, 1),
-    [b'i', b'.' | b' ' | b'\t', ..] | [b'i'] => (Tag::Italic, 1),
-    [b'u', b'.' | b' ' | b'\t', ..] | [b'u'] => (Tag::Underline, 1),
-    [b'c', b'.' | b' ' | b'\t', ..] | [b'c'] => (Tag::Class, 1),
-    [b'v', b'.' | b' ' | b'\t', ..] | [b'v'] => (Tag::Voice, 1),
+    [b'b', next, ..] if follows_name(*next) => (Tag::Bold, 1),
+    [b'b'] => (Tag::Bold, 1),
+    [b'i', next, ..] if follows_name(*next) => (Tag::Italic, 1),
+    [b'i'] => (Tag::Italic, 1),
+    [b'u', next, ..] if follows_name(*next) => (Tag::Underline, 1),
+    [b'u'] => (Tag::Underline, 1),
+    [b'c', next, ..] if follows_name(*next) => (Tag::Class, 1),
+    [b'c'] => (Tag::Class, 1),
+    [b'v', next, ..] if follows_name(*next) => (Tag::Voice, 1),
+    [b'v'] => (Tag::Voice, 1),
     _ if inner.starts_with("ruby") => {
-      if inner.len() == 4 || matches!(inner.as_bytes()[4], b'.' | b' ' | b'\t') {
+      if inner.len() == 4 || follows_name(inner.as_bytes()[4]) {
         (Tag::Ruby, 4)
       } else {
         return None;
       }
     }
     _ if inner.starts_with("rt") => {
-      if inner.len() == 2 || matches!(inner.as_bytes()[2], b'.' | b' ' | b'\t') {
+      if inner.len() == 2 || follows_name(inner.as_bytes()[2]) {
         (Tag::RubyText, 2)
       } else {
         return None;
       }
     }
-    _ if inner.starts_with("lang")
-      && (inner.len() == 4 || matches!(inner.as_bytes()[4], b'.' | b' ' | b'\t')) =>
-    {
+    _ if inner.starts_with("lang") && (inner.len() == 4 || follows_name(inner.as_bytes()[4])) => {
       (Tag::Lang, 4)
     }
     _ => return None,
