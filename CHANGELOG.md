@@ -22,6 +22,15 @@ FIXED
   a 128 KiB thread, a sixteenth of the stack a Rust thread is given by
   default. Cue text within the limit parses exactly as it did before.
 
+- **The test suite now compiles and runs on every feature tier.**
+  `tests/ass.rs` imported the `std`-gated `ass::Writer` unconditionally, so
+  `cargo hack test --feature-powerset` failed to build at
+  `--no-default-features` and at `--features alloc`; beneath that failure both
+  ASS test files asserted cleaned text that `PlainText::normalize` can only
+  produce with `alloc`. The `std`- and `alloc`-only cases are gated to the
+  tiers where they mean something, so the no-alloc tier the crate advertises
+  is now exercised rather than merely built.
+
 FEATURES
 
 - Add `vtt::cue::Options`, carrying the cue text `max_depth` bound, and
@@ -34,6 +43,32 @@ FEATURES
 - Add `vtt::cue::CueText::try_parse` and `try_parse_with`, which refuse
   over-deep input with the new `error::MaxDepthExceededError` instead of
   flattening it.
+
+- **Add `srt::text`, a clean-text layer for SubRip cue bodies.** WebVTT and
+  ASS/SSA each had one; SubRip did not, so an embedded `S_TEXT/UTF8` packet —
+  a cue *body*, with no index line and no timing line — had nothing in this
+  crate to point at. `srt::text::TextParser` is a zero-allocation `logos` DFA
+  over a body, available on every feature tier, and `srt::text::PlainText`
+  mirrors `ass::text::PlainText`: deferred normalization, an `OnceCell` cache,
+  and an allocation-free `segments()` iterator. A body containing neither `<`
+  nor `{` is returned borrowed and never allocates.
+
+  SubRip has no specification, so the dialect is the common ground between
+  FFmpeg's `subrip` decoder, VLC's subtitle decoder and Aegisub's SRT reader,
+  and every rule is documented against them. `<b>`, `<i>`, `<u>`, `<s>` and
+  `<font>` are markup, matched case-insensitively, with `<font>`'s attributes
+  readable through `StartTag::attrs`; `<br>` in every form is a line break;
+  SSA and MicroDVD inline codes left behind by a converter are dropped. Two
+  rules matter most, and both are where routing a SubRip body through the
+  WebVTT cue-text layer gives a wrong answer rather than a lucky one: **a `<`
+  that begins none of those tags is literal text, and so is the rest of the
+  line** — `I <3 this` survives, as do the 198 lines of the crate's own
+  fixture corpus that open a Japanese narration bracket and never close it —
+  and **character references are not decoded**, because no SubRip reader
+  decodes them.
+
+  The module builds no tree, so no nesting depth can overflow the stack and
+  there is no depth bound to configure.
 
 # [0.3.0](https://github.com/findit-studio/fasrt/releases/tag/v0.3.0) (August 31st, 2026)
 

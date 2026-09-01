@@ -9,6 +9,9 @@ pub use types::{Entry, Header, Hour, Timestamp};
 
 mod types;
 
+/// Cue-body text parsing and clean-text extraction.
+pub mod text;
+
 /// The error type for parsing SRT files.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ParseSrtError {
