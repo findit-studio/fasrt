@@ -1,5 +1,7 @@
 # UNRELEASED
 
+# [0.4.0](https://github.com/findit-studio/fasrt/releases/tag/v0.4.0) (September 1st, 2026)
+
 FIXED
 
 - **Cue text class lists now exclude the empty string, as W3C WebVTT §6.4
@@ -188,18 +190,7 @@ FEATURES
   annotation carries a flag rather than an owned string: the shape of the answer
   is the same on every feature tier.
 
-CHANGED
-
-- **`vtt::cue::TagNode::classes` returns `vtt::cue::Classes` rather than
-  `&str`.** This is the class-list fix above, and it is a breaking change to a
-  published signature: it was taken deliberately, because the trap was the name
-  — `classes()` reads as "the classes" and returned something that is not the
-  list. Every call site fails to compile rather than changing meaning silently.
-  To migrate: `node.classes()` → `node.classes_raw()` for the old return value,
-  or iterate it for §6.4's list. `with_classes` and `set_classes` are unchanged
-  and still take the raw dot-separated form.
-
-- **Add `srt::text`, a clean-text layer for SubRip cue bodies.** WebVTT and
+- Add `srt::text`, a clean-text layer for SubRip cue bodies. WebVTT and
   ASS/SSA each had one; SubRip did not, so an embedded `S_TEXT/UTF8` packet —
   a cue *body*, with no index line and no timing line — had nothing in this
   crate to point at. `srt::text::TextParser` is a zero-allocation `logos` DFA
@@ -215,15 +206,26 @@ CHANGED
   readable through `StartTag::attrs`; `<br>` in every form is a line break;
   SSA and MicroDVD inline codes left behind by a converter are dropped. Two
   rules matter most, and both are where routing a SubRip body through the
-  WebVTT cue-text layer gives a wrong answer rather than a lucky one: **a `<`
+  WebVTT cue-text layer gives a wrong answer rather than a lucky one: a `<`
   that begins none of those tags is literal text, and so is the rest of the
-  line** — `I <3 this` survives, as do the 198 lines of the crate's own
+  line — `I <3 this` survives, as do the 198 lines of the crate's own
   fixture corpus that open a Japanese narration bracket and never close it —
-  and **character references are not decoded**, because no SubRip reader
+  and character references are not decoded, because no SubRip reader
   decodes them.
 
   The module builds no tree, so no nesting depth can overflow the stack and
   there is no depth bound to configure.
+
+CHANGED
+
+- **`vtt::cue::TagNode::classes` returns `vtt::cue::Classes` rather than
+  `&str`.** This is the class-list fix above, and it is a breaking change to a
+  published signature: it was taken deliberately, because the trap was the name
+  — `classes()` reads as "the classes" and returned something that is not the
+  list. Every call site fails to compile rather than changing meaning silently.
+  To migrate: `node.classes()` → `node.classes_raw()` for the old return value,
+  or iterate it for §6.4's list. `with_classes` and `set_classes` are unchanged
+  and still take the raw dot-separated form.
 
 - **A cue text annotation is a `vtt::cue::Annotation`, not a `&str`.** §6.4's
   annotation state cannot be run over a slice borrowed from the cue — decoding
