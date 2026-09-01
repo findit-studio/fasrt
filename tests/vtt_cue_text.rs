@@ -1,8 +1,25 @@
 #![cfg(any(feature = "alloc", feature = "std"))]
 
 use fasrt::vtt::cue::{
-  Classes, CueParser, CueStr, CueText, CueToken, DEFAULT_MAX_DEPTH, Node, Options, Tag, TagNode,
+  Annotation, Classes, CueParser, CueStr, CueText, CueToken, DEFAULT_MAX_DEPTH, Node, Options, Tag,
+  TagNode,
 };
+
+/// A token's annotation as W3C WebVTT §6.4's annotation state produces it.
+fn token_annotation<'t>(token: &'t CueToken<'_>) -> Option<&'t str> {
+  match token {
+    CueToken::StartTag { annotation, .. } => annotation.as_ref().map(Annotation::normalize),
+    other => panic!("expected a start tag, got {other:?}"),
+  }
+}
+
+/// A token's annotation as the cue spelled it.
+fn token_annotation_raw<'a>(token: &CueToken<'a>) -> Option<&'a str> {
+  match token {
+    CueToken::StartTag { annotation, .. } => annotation.as_ref().map(Annotation::as_raw),
+    other => panic!("expected a start tag, got {other:?}"),
+  }
+}
 
 // ── CueParser (token iterator) tests ────────────────────────────────────────
 
@@ -78,10 +95,10 @@ fn parse_voice_tag() {
     &tokens[0],
     CueToken::StartTag {
       tag: Tag::Voice,
-      annotation: Some("Roger Bingham"),
       ..
     }
   ));
+  assert_eq!(token_annotation(&tokens[0]), Some("Roger Bingham"));
 }
 
 #[test]
@@ -90,12 +107,9 @@ fn parse_lang_tag() {
   assert_eq!(tokens.len(), 3);
   assert!(matches!(
     &tokens[0],
-    CueToken::StartTag {
-      tag: Tag::Lang,
-      annotation: Some("en"),
-      ..
-    }
+    CueToken::StartTag { tag: Tag::Lang, .. }
   ));
+  assert_eq!(token_annotation(&tokens[0]), Some("en"));
 }
 
 #[test]
@@ -341,7 +355,7 @@ fn tree_voice_with_annotation() {
   match &tree.children()[0] {
     Node::Tag(tag) => {
       assert_eq!(tag.tag(), Tag::Voice);
-      assert_eq!(tag.annotation(), Some("Speaker"));
+      assert_eq!(tag.annotation().map(Annotation::normalize), Some("Speaker"));
       assert_eq!(tag.children().len(), 1);
     }
     _ => panic!("expected tag"),
@@ -500,10 +514,10 @@ fn parse_unterminated_voice() {
     &tokens[0],
     CueToken::StartTag {
       tag: Tag::Voice,
-      annotation: Some("Speaker"),
       ..
     }
   ));
+  assert_eq!(token_annotation(&tokens[0]), Some("Speaker"));
 }
 
 #[test]
@@ -533,12 +547,9 @@ fn parse_unterminated_lang() {
   let tokens: Vec<_> = CueParser::new("<lang en").collect();
   assert!(matches!(
     &tokens[0],
-    CueToken::StartTag {
-      tag: Tag::Lang,
-      annotation: Some("en"),
-      ..
-    }
+    CueToken::StartTag { tag: Tag::Lang, .. }
   ));
+  assert_eq!(token_annotation(&tokens[0]), Some("en"));
 }
 
 #[test]
@@ -873,7 +884,7 @@ fn lang(language: &str) -> Option<String> {
 fn declared_language_is_the_language_stack_push() {
   assert_eq!(
     TagNode::new(Tag::Lang)
-      .with_annotation(Some("en"))
+      .with_annotation(Some(Annotation::new("en")))
       .declared_language(),
     Some("en")
   );
@@ -894,7 +905,7 @@ fn declared_language_is_the_language_stack_push() {
   }
   assert_eq!(
     TagNode::new(Tag::Voice)
-      .with_annotation(Some("Esme"))
+      .with_annotation(Some(Annotation::new("Esme")))
       .declared_language(),
     None
   );
@@ -1080,19 +1091,20 @@ fn an_over_deep_lang_takes_its_scope_with_it() {
   assert!(CueText::try_parse(&deep).is_err());
 }
 
-/// The scope is §6.4's; the *value* is the annotation exactly as the parser
-/// stores it. This crate keeps annotations verbatim and does not run §6.4's
-/// annotation-state normalization — character references stay undecoded and
-/// runs of whitespace uncollapsed — for `<lang>` as for `<v>`. That is the
-/// tokenizer's half of §6.4, and this fixture pins where the line falls.
+/// The scope is §6.4's, and so now is the *value*: what a `<lang>` pushes is
+/// the annotation its annotation state produced, with character references
+/// decoded and whitespace runs collapsed. This fixture was the contract of
+/// absence — it pinned `"en&#x2D;US"` as the declared language while the
+/// annotation was a slice borrowed from the cue — and now pins the behaviour
+/// that replaced it.
 #[test]
-fn the_language_is_the_annotation_as_stored() {
+fn the_language_is_the_normalized_annotation() {
   let entity = CueText::parse("<lang en&#x2D;US>x</lang>");
   assert_eq!(
     languages(&entity),
     [
-      ("lang".to_owned(), lang("en&#x2D;US")),
-      ("\"x\"".to_owned(), lang("en&#x2D;US")),
+      ("lang".to_owned(), lang("en-US")),
+      ("\"x\"".to_owned(), lang("en-US")),
     ]
   );
 
@@ -1100,17 +1112,23 @@ fn the_language_is_the_annotation_as_stored() {
   assert_eq!(
     languages(&runs),
     [
-      ("lang".to_owned(), lang("en   US")),
-      ("\"x\"".to_owned(), lang("en   US")),
+      ("lang".to_owned(), lang("en US")),
+      ("\"x\"".to_owned(), lang("en US")),
     ]
   );
 
-  // The same text reaches `annotation()`, so the two faces never disagree.
-  assert_eq!(first_tag(&entity).annotation(), Some("en&#x2D;US"));
+  // The source text is still there, and is still what the node serializes
+  // from — the two faces answer different questions and never disagree.
+  let node = first_tag(&entity);
   assert_eq!(
-    first_tag(&entity).declared_language(),
-    first_tag(&entity).annotation()
+    node.annotation().map(Annotation::as_raw),
+    Some("en&#x2D;US")
   );
+  assert_eq!(
+    node.declared_language(),
+    node.annotation().map(Annotation::normalize)
+  );
+  assert_eq!(entity.to_string(), "<lang en&#x2D;US>x</lang>");
 }
 
 /// The walk is document order — every node, each tag before its children, and
@@ -1175,12 +1193,13 @@ fn every_delimiter_ends_a_tag_name() {
         CueToken::StartTag {
           tag: Tag::Lang,
           classes: "",
-          annotation: Some("en"),
+          ..
         }
       ),
       "delimiter {delimiter:?} gave {:?}",
       tokens.first()
     );
+    assert_eq!(token_annotation(&tokens[0]), Some("en"), "{delimiter:?}");
 
     // And in the tree, where the tag's whole scope rides on it being seen.
     let tree = CueText::parse(&input);
@@ -1206,12 +1225,13 @@ fn every_delimiter_ends_a_class_list() {
         CueToken::StartTag {
           tag: Tag::Class,
           classes: "a..b",
-          annotation: Some("note"),
+          ..
         }
       ),
       "delimiter {delimiter:?} gave {:?}",
       tokens.first()
     );
+    assert_eq!(token_annotation(&tokens[0]), Some("note"), "{delimiter:?}");
 
     let tree = CueText::parse(&input);
     let node = first_tag(&tree);
@@ -1220,7 +1240,11 @@ fn every_delimiter_ends_a_class_list() {
       ["a", "b"],
       "delimiter {delimiter:?}"
     );
-    assert_eq!(node.annotation(), Some("note"), "delimiter {delimiter:?}");
+    assert_eq!(
+      node.annotation().map(Annotation::normalize),
+      Some("note"),
+      "delimiter {delimiter:?}"
+    );
   }
 }
 
@@ -1231,10 +1255,16 @@ fn every_delimiter_ends_a_class_list() {
 #[test]
 fn the_annotation_is_trimmed_over_ascii_whitespace() {
   let tree = CueText::parse("<v \t\n\u{000C}\rEsme \t\n\u{000C}\r>x</v>");
-  assert_eq!(first_tag(&tree).annotation(), Some("Esme"));
+  assert_eq!(
+    first_tag(&tree).annotation().map(Annotation::as_raw),
+    Some("Esme")
+  );
 
   let kept = CueText::parse("<v \u{00A0}Esme\u{00A0}>x</v>");
-  assert_eq!(first_tag(&kept).annotation(), Some("\u{00A0}Esme\u{00A0}"));
+  assert_eq!(
+    first_tag(&kept).annotation().map(Annotation::normalize),
+    Some("\u{00A0}Esme\u{00A0}")
+  );
 
   // CR is trimmed but never delimits, so a language keeps none of it.
   let cr_padded = CueText::parse("<lang \ren\r>x</lang>");
@@ -1248,21 +1278,13 @@ fn the_annotation_is_trimmed_over_ascii_whitespace() {
   // Whitespace-only leaves no annotation at all, CR-only included, and the
   // unterminated path answers the same way.
   for input in ["<v \t >x</v>", "<v \r>x</v>", "<v \r\n>x</v>"] {
-    assert_eq!(
-      first_tag(&CueText::parse(input)).annotation(),
-      None,
+    assert!(
+      first_tag(&CueText::parse(input)).annotation().is_none(),
       "{input:?}"
     );
   }
   let unterminated: Vec<_> = CueParser::new("<v \rEsme\r").collect();
-  assert!(matches!(
-    &unterminated[0],
-    CueToken::StartTag {
-      tag: Tag::Voice,
-      annotation: Some("Esme"),
-      ..
-    }
-  ));
+  assert_eq!(token_annotation_raw(&unterminated[0]), Some("Esme"));
 }
 
 /// A tag left unterminated at end of input is recognized by a separate path,
@@ -1273,17 +1295,11 @@ fn every_delimiter_ends_a_name_in_an_unterminated_tag() {
     let lang_input = format!("<lang{delimiter}en");
     let lang: Vec<_> = CueParser::new(&lang_input).collect();
     assert!(
-      matches!(
-        &lang[0],
-        CueToken::StartTag {
-          tag: Tag::Lang,
-          annotation: Some("en"),
-          ..
-        }
-      ),
+      matches!(&lang[0], CueToken::StartTag { tag: Tag::Lang, .. }),
       "delimiter {delimiter:?} gave {:?}",
       lang.first()
     );
+    assert_eq!(token_annotation(&lang[0]), Some("en"), "{delimiter:?}");
 
     let class_input = format!("<c.a..b{delimiter}note");
     let class: Vec<_> = CueParser::new(&class_input).collect();
@@ -1293,12 +1309,13 @@ fn every_delimiter_ends_a_name_in_an_unterminated_tag() {
         CueToken::StartTag {
           tag: Tag::Class,
           classes: "a..b",
-          annotation: Some("note"),
+          ..
         }
       ),
       "delimiter {delimiter:?} gave {:?}",
       class.first()
     );
+    assert_eq!(token_annotation(&class[0]), Some("note"), "{delimiter:?}");
   }
 }
 
@@ -1724,4 +1741,335 @@ fn run_walk_on_small_stack(walk: &str) {
     .expect("spawn a small-stack thread")
     .join()
     .expect("the walk must not unwind");
+}
+
+// ── §6.4's start tag annotation state ───────────────────────────────────────
+//
+// The state accumulates an annotation into a buffer, decoding the character
+// references it meets on the way, and on the `>` that ends the tag removes
+// leading and trailing ASCII whitespace and replaces every run of it within
+// with a single U+0020 SPACE. The whole of that is `Annotation::normalize`;
+// `Annotation::as_raw` is the text the cue spelled, which is what a node is
+// serialized from.
+
+/// The annotation of the tree's first tag, both faces.
+fn annotation_of(input: &str) -> (Option<String>, Option<String>) {
+  let tree = CueText::parse(input);
+  let node = first_tag(&tree);
+  (
+    node.annotation().map(|a| a.normalize().to_owned()),
+    node.annotation().map(|a| a.as_raw().to_owned()),
+  )
+}
+
+/// §6.4's annotation state consumes character references through the same
+/// "consume a character reference" algorithm the data state uses, so an
+/// annotation decodes exactly as cue text does — named, numeric, hexadecimal,
+/// the legacy forms without a semicolon, and the ones that match nothing.
+#[test]
+fn character_references_in_an_annotation_are_decoded() {
+  for (input, normalized, raw) in [
+    ("<lang en&#x2D;US>x</lang>", "en-US", "en&#x2D;US"),
+    ("<lang en&#45;US>x</lang>", "en-US", "en&#45;US"),
+    ("<v R&amp;D>x</v>", "R&D", "R&amp;D"),
+    // A legacy reference with no semicolon still decodes.
+    ("<v R&ampD>x</v>", "R&D", "R&ampD"),
+    // The longest match wins, and nothing beyond it is consumed.
+    ("<v &notit;>x</v>", "\u{00AC}it;", "&notit;"),
+    // No match at all passes through as text.
+    ("<v &zzz;>x</v>", "&zzz;", "&zzz;"),
+    ("<v a&>x</v>", "a&", "a&"),
+    // A NUL is U+FFFD here as it is in cue text.
+    ("<v a\0b>x</v>", "a\u{FFFD}b", "a\0b"),
+  ] {
+    assert_eq!(
+      annotation_of(input),
+      (Some(normalized.to_owned()), Some(raw.to_owned())),
+      "{input:?}"
+    );
+  }
+}
+
+/// *"Replace any sequence of one or more consecutive ASCII whitespace
+/// characters in buffer with a single U+0020 SPACE character."* One or more —
+/// so a lone TAB is rewritten too — and over Infra's five, the set the trim
+/// already used.
+#[test]
+fn internal_whitespace_runs_collapse_to_one_space() {
+  for (input, normalized) in [
+    ("<v Roger  Bingham>x</v>", "Roger Bingham"),
+    ("<v Roger\tBingham>x</v>", "Roger Bingham"),
+    ("<v Roger\nBingham>x</v>", "Roger Bingham"),
+    ("<v Roger\u{000C}Bingham>x</v>", "Roger Bingham"),
+    ("<v Roger\rBingham>x</v>", "Roger Bingham"),
+    ("<v Roger \t\n\u{000C}\r Bingham>x</v>", "Roger Bingham"),
+    ("<v a  b  c>x</v>", "a b c"),
+    // A single space between two characters is already the normal form.
+    ("<v Roger Bingham>x</v>", "Roger Bingham"),
+    // NO-BREAK SPACE is not ASCII whitespace, so it is neither trimmed nor
+    // collapsed — the distinction #27 drew, still drawn.
+    ("<v a\u{00A0}\u{00A0}b>x</v>", "a\u{00A0}\u{00A0}b"),
+  ] {
+    assert_eq!(
+      annotation_of(input).0,
+      Some(normalized.to_owned()),
+      "{input:?}"
+    );
+  }
+}
+
+/// The buffer §6.4 collapses holds *decoded* characters, so the two steps
+/// compose in that order and only in that order: a `&#x20;` is whitespace by
+/// the time the run is measured, and can be trimmed away entirely.
+#[test]
+fn the_annotation_decodes_before_it_collapses() {
+  // Two references, one run, one space.
+  assert_eq!(
+    annotation_of("<v a&#x20;&#x20;b>x</v>").0,
+    Some("a b".to_owned())
+  );
+  // A reference beside a literal space is the same run.
+  assert_eq!(
+    annotation_of("<v a&#x20; b>x</v>").0,
+    Some("a b".to_owned())
+  );
+  // A decoded TAB is whitespace like any other.
+  assert_eq!(annotation_of("<v a&Tab;b>x</v>").0, Some("a b".to_owned()));
+  // And at the ends, where the source text has nothing to trim.
+  assert_eq!(
+    annotation_of("<v &#x20;a&#x20;>x</v>").0,
+    Some("a".to_owned())
+  );
+
+  // An annotation that is nothing but whitespace references is present — the
+  // trim of the source text saw no whitespace to remove — and normalizes to
+  // the empty string. §6.4 draws no line between that and an absent
+  // annotation, so neither may a caller.
+  let (normalized, raw) = annotation_of("<v &#x20;>x</v>");
+  assert_eq!(normalized, Some(String::new()));
+  assert_eq!(raw, Some("&#x20;".to_owned()));
+}
+
+/// `&gt;` is a character reference, not a delimiter: the tokenizer ends the tag
+/// on a literal `>` alone, so the annotation runs past it and decodes to one.
+/// This is why a node is serialized from `as_raw` — writing the decoded `>`
+/// back would end the start tag two characters early.
+#[test]
+fn a_greater_than_reference_stays_inside_the_annotation() {
+  let tree = CueText::parse("<v a&gt;b>x</v>");
+  let node = first_tag(&tree);
+  assert_eq!(node.annotation().map(Annotation::normalize), Some("a>b"));
+  assert_eq!(node.annotation().map(Annotation::as_raw), Some("a&gt;b"));
+  assert_eq!(
+    tree.children().len(),
+    1,
+    "the tag must not have ended early"
+  );
+  assert_eq!(tree.to_string(), "<v a&gt;b>x</v>");
+
+  // Round-tripping the decoded value instead would build a different document.
+  assert_eq!(CueText::parse("<v a>b>x</v>").children().len(), 1);
+  assert_eq!(
+    first_tag(&CueText::parse("<v a>b>x</v>"))
+      .annotation()
+      .map(Annotation::normalize),
+    Some("a")
+  );
+}
+
+/// Every annotation the crate reports is read the same way — `<v>`'s voice as
+/// much as `<lang>`'s language, through the tree and through a bare token.
+#[test]
+fn the_voice_and_the_language_normalize_alike() {
+  assert_eq!(
+    annotation_of("<v Esme&#x20;&#x20;Vale>x</v>").0,
+    Some("Esme Vale".to_owned())
+  );
+  assert_eq!(
+    first_tag(&CueText::parse("<lang en&#x2D;US>x</lang>")).declared_language(),
+    Some("en-US")
+  );
+
+  // The token path, with no tree at all.
+  let tokens: Vec<_> = CueParser::new("<v Esme&#x9;Vale>x</v>").collect();
+  assert_eq!(token_annotation(&tokens[0]), Some("Esme Vale"));
+  assert_eq!(token_annotation_raw(&tokens[0]), Some("Esme&#x9;Vale"));
+
+  // And the unterminated path, which builds its annotation through the same
+  // function.
+  let unterminated: Vec<_> = CueParser::new("<lang en&#x2D;US").collect();
+  assert_eq!(token_annotation(&unterminated[0]), Some("en-US"));
+}
+
+/// An annotation already in §6.4's normal form is its own normalized value, so
+/// it is handed back borrowed from the cue: the parser allocates for an
+/// annotation only when the spec says the text has to change.
+#[test]
+fn an_annotation_already_normal_is_borrowed() {
+  let input = String::from("<v Roger Bingham>x</v>");
+  let tree = CueText::parse(&input);
+  let annotation = first_tag(&tree).annotation().expect("an annotation");
+
+  assert!(!annotation.requires_normalization());
+  assert_eq!(
+    annotation.normalize().as_ptr(),
+    annotation.as_raw().as_ptr(),
+    "a normal-form annotation must not be copied"
+  );
+  assert!(
+    input
+      .as_bytes()
+      .as_ptr_range()
+      .contains(&annotation.as_raw().as_ptr()),
+    "and must still point into the cue"
+  );
+
+  // Everything the flag calls abnormal is one of §6.4's own rewrites.
+  for raw in ["a  b", "a\tb", " a", "a ", "a&#x20;b", "a\0b"] {
+    assert!(
+      Annotation::new(raw).requires_normalization(),
+      "{raw:?} is not in normal form"
+    );
+  }
+}
+
+/// Decoding happens once, on demand, and the answer is kept.
+#[test]
+fn normalizing_an_annotation_is_lazy_and_cached() {
+  let annotation = Annotation::new("Esme&#x20;&#x20;Vale");
+  assert!(annotation.requires_normalization());
+
+  let first = annotation.normalize();
+  let second = annotation.normalize();
+  assert_eq!(first, "Esme Vale");
+  assert_eq!(
+    first.as_ptr(),
+    second.as_ptr(),
+    "the decoded annotation must be computed once"
+  );
+}
+
+/// A tree writes its annotations back as the cue spelled them, so a parse and a
+/// write is still the identity on a document whose annotations carry character
+/// references or uncollapsed whitespace.
+#[test]
+fn the_writer_emits_the_annotation_as_stored() {
+  for input in [
+    "<lang en&#x2D;US>x</lang>",
+    "<v Roger&#x20;&#x20;Bingham>x</v>",
+    "<v a&gt;b>x</v>",
+    "<v.loud Esme  Vale>x</v>",
+  ] {
+    assert_eq!(CueText::parse(input).to_string(), input, "{input:?}");
+  }
+}
+
+/// The whole walk reports the normalized language, and nesting still shadows.
+#[test]
+fn the_language_walk_reports_the_normalized_language() {
+  let tree = CueText::parse("<lang en&#x2D;US>a<lang ja&#x20;&#x20;JP>b</lang>c</lang>d");
+  assert_eq!(
+    languages(&tree),
+    [
+      ("lang".to_owned(), lang("en-US")),
+      ("\"a\"".to_owned(), lang("en-US")),
+      ("lang".to_owned(), lang("ja JP")),
+      ("\"b\"".to_owned(), lang("ja JP")),
+      ("\"c\"".to_owned(), lang("en-US")),
+      ("\"d\"".to_owned(), None),
+    ]
+  );
+}
+
+/// HTML's numeric character reference end state replaces the legacy C1 code
+/// points with the Windows-1252 characters an author writing them meant, and
+/// §6.4 consumes references through that algorithm — in the cue text data state
+/// and in the annotation state alike, since both run one decoder. Every row of
+/// the table, in both radices, through both.
+#[test]
+fn legacy_c1_numeric_references_are_replaced() {
+  const TABLE: [(u32, char); 27] = [
+    (0x80, '\u{20AC}'),
+    (0x82, '\u{201A}'),
+    (0x83, '\u{0192}'),
+    (0x84, '\u{201E}'),
+    (0x85, '\u{2026}'),
+    (0x86, '\u{2020}'),
+    (0x87, '\u{2021}'),
+    (0x88, '\u{02C6}'),
+    (0x89, '\u{2030}'),
+    (0x8A, '\u{0160}'),
+    (0x8B, '\u{2039}'),
+    (0x8C, '\u{0152}'),
+    (0x8E, '\u{017D}'),
+    (0x91, '\u{2018}'),
+    (0x92, '\u{2019}'),
+    (0x93, '\u{201C}'),
+    (0x94, '\u{201D}'),
+    (0x95, '\u{2022}'),
+    (0x96, '\u{2013}'),
+    (0x97, '\u{2014}'),
+    (0x98, '\u{02DC}'),
+    (0x99, '\u{2122}'),
+    (0x9A, '\u{0161}'),
+    (0x9B, '\u{203A}'),
+    (0x9C, '\u{0153}'),
+    (0x9E, '\u{017E}'),
+    (0x9F, '\u{0178}'),
+  ];
+
+  for (code_point, replacement) in TABLE {
+    let want = replacement.to_string();
+    for reference in [format!("&#x{code_point:X};"), format!("&#{code_point};")] {
+      // Cue text, through the data state.
+      assert_eq!(
+        CueStr::needs_normalization(&reference).normalize(),
+        want,
+        "text {reference}"
+      );
+      // An annotation, through the annotation state.
+      assert_eq!(
+        Annotation::new(&reference).normalize(),
+        want,
+        "annotation {reference}"
+      );
+    }
+  }
+
+  // The five the table omits have no Windows-1252 character, so they stay the
+  // C1 control the reference named.
+  for code_point in [0x81_u32, 0x8D, 0x8F, 0x90, 0x9D] {
+    let reference = format!("&#x{code_point:X};");
+    let want = char::from_u32(code_point)
+      .expect("a C1 control")
+      .to_string();
+    assert_eq!(
+      CueStr::needs_normalization(&reference).normalize(),
+      want,
+      "{reference}"
+    );
+    assert_eq!(Annotation::new(&reference).normalize(), want, "{reference}");
+  }
+
+  // The end state's other substitutions are unchanged: NULL, a surrogate and a
+  // code point past U+10FFFF are all U+FFFD, and neither is a C1 replacement.
+  for reference in ["&#0;", "&#x0;", "&#xD800;", "&#xFFFFFF;", "&#99999999999;"] {
+    assert_eq!(
+      CueStr::needs_normalization(reference).normalize(),
+      "\u{FFFD}",
+      "{reference}"
+    );
+    assert_eq!(
+      Annotation::new(reference).normalize(),
+      "\u{FFFD}",
+      "{reference}"
+    );
+  }
+
+  // And the replacement is a real character in the tree, collapsed with the
+  // whitespace around it like any other.
+  assert_eq!(
+    annotation_of("<v a&#x80;&#x9;b>x</v>").0,
+    Some("a\u{20AC} b".to_owned())
+  );
 }

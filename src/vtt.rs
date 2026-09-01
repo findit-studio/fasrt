@@ -1246,7 +1246,7 @@ const _: () = {
     ///
     /// ```
     /// use fasrt::vtt::{Writer, Header, Timestamp, Hour};
-    /// use fasrt::vtt::cue::{CueText, Node, CueStr, TagNode, Tag};
+    /// use fasrt::vtt::cue::{Annotation, CueText, Node, CueStr, TagNode, Tag};
     /// use fasrt::types::*;
     ///
     /// let header = Header::new(
@@ -1263,7 +1263,7 @@ const _: () = {
     /// // CueText DOM
     /// let body = CueText::new(vec![
     ///   Node::Tag(TagNode::new(Tag::Lang)
-    ///     .with_annotation(Some("en"))
+    ///     .with_annotation(Some(Annotation::new("en")))
     ///     .with_children(vec![Node::Text(CueStr::borrowed("hello"))])),
     /// ]);
     /// writer.write_cue(&header, &body).unwrap();

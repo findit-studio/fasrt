@@ -23,11 +23,55 @@ FIXED
   unterminated tags alike. The annotation is trimmed over ASCII whitespace —
   those four plus CR, which ends no state but is still trimmed — rather than
   over Unicode's whitespace set, so a NO-BREAK SPACE around a `<v>` voice is
-  text rather than padding. §6.4's remaining annotation-state work — decoding
-  character references and collapsing internal whitespace runs — still is not
-  done: both need an owned string where an annotation is a slice borrowed from
-  the cue. No cue body in the crate's fixture corpus reaches any of these
-  shapes, and the WPT suites are unchanged.
+  text rather than padding. No cue body in the crate's fixture corpus reaches
+  any of these shapes, and the WPT suites are unchanged.
+
+- **Cue text annotations now run §6.4's annotation state in full.** The
+  tokenizer trimmed an annotation and stopped there; §6.4 also decodes the
+  character references it met while filling the buffer, and then *"replaces any
+  sequence of one or more consecutive ASCII whitespace characters ... with a
+  single U+0020 SPACE character"*. So `<lang en&#x2D;US>` declared
+  `"en&#x2D;US"` rather than the language `"en-US"`, and `<v Roger  Bingham>`
+  named a voice no `<v Roger Bingham>` would match. Both are now done, for
+  `<v>`'s voice exactly as for `<lang>`'s language, in terminated and
+  unterminated tags alike, through the same character-reference decoder the
+  cue text data state already used — the two states differ only in what becomes
+  of the decoded characters, so they share one decoder and differ in one sink.
+
+  The two steps compose in the order §6.4 writes them, decode before collapse,
+  because the buffer §6.4 collapses holds decoded characters: `<v a&#x20; b>`
+  is one run of whitespace and gives `"a b"`, and `<v &#x20;a>` is padded
+  rather than starting with a space.
+
+  Nothing in the crate's fixture corpus moves — of the 10 annotations in 302
+  WebVTT cue bodies, 0 change — and the five WPT cue-parsing suites are green
+  before and after with no expectation edited. The crate's own WPT harness was
+  reading the raw text into the `title` and `lang` attributes it compares, and
+  now reads the normalized annotation a browser would put there.
+
+- **A numeric character reference to a legacy C1 code point now decodes to the
+  character the author meant.** WebVTT consumes character references through
+  HTML's algorithm, whose numeric character reference end state replaces the
+  0x80–0x9F range with the Windows-1252 characters authors write them for, so
+  `&#x80;` is a EURO SIGN and not U+0080. The decoder handed the code point
+  straight to `char::from_u32` and produced the C1 control. All 27 rows of the
+  table are read now, in both radices; the five code points in that range the
+  table omits still pass through, and the end state's other substitutions — NUL,
+  a surrogate and a value past U+10FFFF, each U+FFFD — are unchanged. This is
+  one decoder, so it fixes `vtt::cue::CueStr::normalize` for cue text as much as
+  the new annotation state. No fixture in the corpus carries such a reference,
+  so the WPT suites are unchanged. (Found by the adversarial review of the
+  annotation state, in the decoder it newly exposed.)
+
+- **Fixture corpora are pinned against end-of-line conversion.** A new
+  `.gitattributes` marks `fixtures/**` (and the build script's entity table)
+  `-text`, so Git checks them out byte for byte on every platform. Without it a
+  Windows checkout under `core.autocrlf=true` — the default on the GitHub
+  Actions Windows runners — rewrote all 245 LF-stored fixtures to CRLF, and
+  `tests/ass.rs`'s byte-for-byte writer battery compared an LF write against a
+  CRLF file and failed. Not `eol=lf`: 131 SubRip fixtures, one ASS fixture and
+  a WebVTT fixture that mixes both terminators carry their line endings on
+  purpose, and normalization would rewrite them.
 
 - **Cue text `<ruby>` trees now follow W3C WebVTT §6.4.** Two branches of the
   cue text parsing rules were read more loosely than the spec writes them, and
@@ -118,17 +162,31 @@ FEATURES
   empty string and thereby said the subtree is in no known language, clearing
   that fallback rather than deferring to it.
 
-  Two limits of that answer are documented and pinned by fixtures. What these
-  faces settle is the *scope* — which nodes a `<lang>` covers — and the scope is
-  exact. The *value* is the annotation as the parser stores it: this crate keeps
-  annotations verbatim and does not run §6.4's annotation-state normalization,
-  so `<lang en&#x2D;US>` declares `"en&#x2D;US"` rather than `"en-US"`, for
-  `<v>`'s voice as much as for `<lang>` — that is the tokenizer's half of §6.4
-  and closing it would have to move `annotation` off `&str`. And the walk
-  answers for the tree it is given: a `<lang>` that `Options::max_depth` dropped
-  is not in the tree, so its scope is not either, exactly as its classes and
-  markup are not. `try_parse` refuses input that deep rather than returning a
-  tree that dropped part of it.
+  Both the scope and the value are §6.4's. The value is the annotation its
+  annotation state produced, so `<lang en&#x2D;US>` declares `"en-US"`; read
+  `TagNode::annotation` for the text the cue spelled. One limit remains, and it
+  is documented and pinned by fixtures: the walk answers for the tree it is
+  given, so a `<lang>` that `Options::max_depth` dropped is not in the tree and
+  its scope is not either, exactly as its classes and markup are not.
+  `try_parse` refuses input that deep rather than returning a tree that dropped
+  part of it.
+
+- Add `vtt::cue::Annotation`, the carrier a start tag's annotation now travels
+  in. `Annotation::normalize` is §6.4's annotation — character references
+  decoded, NULs replaced, ASCII whitespace trimmed and its runs collapsed —
+  and `Annotation::as_raw` the text the cue spelled, which is what a node is
+  serialized from and must be: a normalized annotation may hold a U+003E that a
+  `&gt;` stood for, and writing that back would end the start tag early. For
+  that reason the type deliberately implements no `Display`.
+
+  It borrows wherever §6.4 allows: an annotation already in normal form is its
+  own normalized value and is handed back pointing into the cue, so the parser
+  still never allocates, and `Annotation::requires_normalization` says which
+  case a caller is in. Without `alloc` there is nowhere to put a decoded string,
+  so `normalize` returns the stored text — the same degradation
+  `vtt::cue::CueStr::normalize` already makes for cue text, and the reason the
+  annotation carries a flag rather than an owned string: the shape of the answer
+  is the same on every feature tier.
 
 CHANGED
 
@@ -166,6 +224,23 @@ CHANGED
 
   The module builds no tree, so no nesting depth can overflow the stack and
   there is no depth bound to configure.
+
+- **A cue text annotation is a `vtt::cue::Annotation`, not a `&str`.** §6.4's
+  annotation state cannot be run over a slice borrowed from the cue — decoding
+  and collapsing both produce text the cue does not contain — so the annotation
+  moved into a carrier that can hold both answers, across
+  `vtt::cue::CueToken::StartTag`'s field, `vtt::cue::TagNode::annotation`,
+  `with_annotation` and `set_annotation`. Like the class-list change this breaks
+  loudly: the type changed, so every call site fails to compile.
+  To migrate: `node.annotation()` → `node.annotation().map(Annotation::as_raw)`
+  for the old return value, or `.map(Annotation::normalize)` for §6.4's;
+  `with_annotation(Some("en"))` → `with_annotation(Some(Annotation::new("en")))`.
+
+- **`vtt::cue::TagNode::declared_language` returns §6.4's annotation and is no
+  longer `const`.** What §6.4 pushes onto its language stack is the value the
+  annotation state produced, so the accessor normalizes, which no `const fn`
+  can do. `vtt::cue::CueText::nodes_with_language` reports the same value, and
+  its language borrows from the tree rather than from the cue.
 
 # [0.3.0](https://github.com/findit-studio/fasrt/releases/tag/v0.3.0) (August 31st, 2026)
 

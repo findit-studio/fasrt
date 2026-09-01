@@ -7,7 +7,7 @@
 
 #![cfg(feature = "std")]
 
-use fasrt::vtt::cue::{CueText, Node, Tag};
+use fasrt::vtt::cue::{Annotation, CueText, Node, Tag};
 use fasrt::vtt::{Block, Parser};
 use serde::Deserialize;
 
@@ -94,15 +94,18 @@ fn format_node(node: &Node<'_>, depth: usize, out: &mut String) {
         out.push_str(&format!("| {child_indent}class=\"{space_separated}\"\n"));
       }
 
-      // Voice annotation → title attribute
+      // Voice annotation → title attribute. §6.4's annotation, not the source
+      // text: the annotation state decodes character references and collapses
+      // whitespace runs before it hands the buffer to the tree, so a browser's
+      // `title` carries the decoded value.
       if tag_node.tag() == Tag::Voice {
-        let ann = tag_node.annotation().unwrap_or("");
+        let ann = tag_node.annotation().map_or("", Annotation::normalize);
         out.push_str(&format!("| {child_indent}title=\"{ann}\"\n"));
       }
 
-      // Lang annotation → lang attribute
+      // Lang annotation → lang attribute, read the same way.
       if tag_node.tag() == Tag::Lang {
-        let ann = tag_node.annotation().unwrap_or("");
+        let ann = tag_node.annotation().map_or("", Annotation::normalize);
         out.push_str(&format!("| {child_indent}lang=\"{ann}\"\n"));
       }
 
