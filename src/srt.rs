@@ -68,7 +68,14 @@ impl Default for ParseSrtError {
 /// By default, the parser runs in **strict** mode: monotonic index
 /// enforcement is on, and any malformed input causes an error.
 /// Use [`Options::lossy`] for a maximally permissive preset.
+///
+/// With the `serde` feature, this type implements [`serde::Serialize`] and
+/// [`serde::Deserialize`] as a snake_case document of its four flags; a field
+/// missing on the way in takes its value from [`Options::default`] (strict),
+/// so a caller may declare only the flags they want to override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case", default))]
 pub struct Options {
   /// Accept entries that have a header line but no preceding index number.
   allow_missing_index: bool,

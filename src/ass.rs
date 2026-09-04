@@ -72,7 +72,14 @@ impl Default for ParseAssError {
 /// By default the parser runs in **strict** mode, where anything that does not
 /// match the format is an error.  Use [`Options::lossy`] for a maximally
 /// permissive preset, which is what real-world fansub scripts usually need.
+///
+/// With the `serde` feature, this type implements [`serde::Serialize`] and
+/// [`serde::Deserialize`] as a snake_case document of its four flags; a field
+/// missing on the way in takes its value from [`Options::default`] (strict),
+/// so a caller may declare only the flags they want to override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case", default))]
 pub struct Options {
   allow_missing_format: bool,
   allow_short_event: bool,

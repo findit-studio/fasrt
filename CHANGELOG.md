@@ -1,5 +1,29 @@
 # UNRELEASED
 
+FEATURES
+
+- Add a `serde` feature. `srt::Options`, `ass::Options`, `ass::EventFormat`
+  and `vtt::cue::Options` — every public options/knob type a caller
+  configures — implement `Serialize`/`Deserialize`, `#[serde(rename_all =
+  "snake_case", default)]`: a document missing a field takes it from that
+  type's own documented default (`Options::strict()` for `srt`/`ass`, the
+  `ass()` preset for `EventFormat`, [`DEFAULT_MAX_DEPTH`] for
+  `vtt::cue::Options`), so a caller may declare only the knobs they mean to
+  override. `EventFormat`'s document form is its own `slots`/`fields` state
+  rather than a friendlier ordered-name list, chosen because it needs no
+  `alloc` — matching the type's own no-allocation, `no_std`-without-`alloc`
+  reach; [`EventFormat::new`] and its three presets remain the way to build
+  one by hand. The dependency is optional and `default-features = false`,
+  and the crate's `alloc`/`std` features forward the matching `serde`
+  capability, so a `no_std` build without `alloc` keeps working with
+  `serde` on: mediagraph#223 had to hand-write the document form of
+  `subtitle::cues`' six `fasrt_*`-mirrored knobs from this crate's own
+  accessors because no such feature existed; a new knob on any of these four
+  types now reaches serde without a downstream mirror to keep in sync.
+
+  [`DEFAULT_MAX_DEPTH`]: https://docs.rs/fasrt/latest/fasrt/vtt/cue/constant.DEFAULT_MAX_DEPTH.html
+  [`EventFormat::new`]: https://docs.rs/fasrt/latest/fasrt/ass/struct.EventFormat.html#method.new
+
 # [0.4.0](https://github.com/findit-studio/fasrt/releases/tag/v0.4.0) (September 1st, 2026)
 
 FIXED
