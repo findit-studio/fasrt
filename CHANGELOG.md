@@ -1,5 +1,7 @@
 # UNRELEASED
 
+# [0.5.0](https://github.com/findit-studio/fasrt/releases/tag/v0.5.0) (September 5th, 2026)
+
 FEATURES
 
 - Add a `serde` feature. `srt::Options`, `ass::Options`, `ass::EventFormat`
