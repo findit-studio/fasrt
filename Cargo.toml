@@ -1,6 +1,6 @@
 [package]
 name = "fasrt"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 repository = "https://github.com/findit-studio/fasrt"
 homepage = "https://github.com/findit-studio/fasrt"
@@ -23,10 +23,16 @@ path = "benches/vtt.rs"
 name = "vtt"
 harness = false
 
+[[test]]
+name = "serde"
+path = "tests/serde.rs"
+required-features = ["serde"]
+
 [features]
 default = ["std"]
-alloc = ["memchr"]
-std = ["thiserror/std", "memchr"]
+alloc = ["memchr", "serde?/alloc"]
+serde = ["dep:serde"]
+std = ["thiserror/std", "memchr", "serde?/std"]
 
 [dependencies]
 derive_more = { version = "2", default-features = false, features = ["display", "from", "into", "is_variant", "unwrap", "try_unwrap"] }
@@ -35,6 +41,7 @@ phf = { version = "0.14", default-features = false }
 thiserror = { version = "2", default-features = false }
 
 memchr = { version = "2", optional = true, default-features = false }
+serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
 
 [build-dependencies]
 phf_codegen = "0.14"

@@ -725,7 +725,13 @@ pub const DEFAULT_MAX_DEPTH: usize = 16;
 /// assert_eq!(Options::new().max_depth(), DEFAULT_MAX_DEPTH);
 /// # }
 /// ```
+///
+/// With the `serde` feature, this type implements [`serde::Serialize`] and
+/// [`serde::Deserialize`] as `{"max_depth": <usize>}`; a missing field takes
+/// its value from [`Options::default`] ([`DEFAULT_MAX_DEPTH`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case", default))]
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
 pub struct Options {

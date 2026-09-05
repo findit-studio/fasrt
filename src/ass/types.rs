@@ -803,10 +803,100 @@ impl EventField {
 /// [`ass`]: EventFormat::ass
 /// [`ssa`]: EventFormat::ssa
 /// [`matroska`]: EventFormat::matroska
+///
+/// # `serde`
+///
+/// With the `serde` feature, this type implements [`serde::Serialize`] and
+/// [`serde::Deserialize`] over its own two fields — `slots`, the position of
+/// each of the 12 known fields (`null` when that field is not declared, in
+/// [`EventField`]'s declaration order: `read_order`, `marked`, `layer`,
+/// `start`, `end`, `style`, `name`, `margin_l`, `margin_r`, `margin_v`,
+/// `effect`, `text`), and `fields`, the total declared column count. This is
+/// the type's exact internal state, chosen because it round-trips on every
+/// feature tier including plain `no_std` with neither `alloc` nor `std` —
+/// where a friendlier ordered-name-list document would need a `Vec` this type
+/// otherwise never allocates. A missing field on the way in takes its value
+/// from [`EventFormat::default`] (the `ass` preset). The document form is
+/// interchange-shaped, not meant for hand-authoring: build one with
+/// [`ass`](Self::ass), [`ssa`](Self::ssa), [`matroska`](Self::matroska) or
+/// [`new`](Self::new) instead.
+///
+/// `Deserialize` is hand-written, not derived: `slots` and `fields` are a
+/// coupled invariant — every declared position must be less than `fields`
+/// and unique among the 12 slots — that no safe constructor
+/// ([`ass`](Self::ass), [`ssa`](Self::ssa), [`matroska`](Self::matroska),
+/// [`new`](Self::new), [`empty`](Self::empty)) can violate, but a derived
+/// `Deserialize` would accept anyway (each field defaulted or supplied
+/// independently). [`parse_fields_with`](Event::parse_fields_with) trusts
+/// that invariant: it splits a row into exactly `fields` columns and reads
+/// `Text`'s column by its stored position, so a position at or past `fields`
+/// is never read — silently dropping that field's data — and two fields at
+/// the same position silently lose all but the lower one. Deserializing
+/// therefore validates the position table before accepting it, whether every
+/// field was supplied or [`EventFormat::default`] filled in the rest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub struct EventFormat {
   slots: [Option<u8>; 12],
   fields: u8,
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for EventFormat {
+  /// Deserializes the `slots`/`fields` document form, then validates it:
+  /// every declared position must be less than `fields` and unique. See the
+  /// type's `# serde` doc section for why a derived impl cannot do this.
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    // `rename = "EventFormat"`: the derived `Serialize` above emits
+    // `serialize_struct("EventFormat", ...)`; without this, `Raw`'s own
+    // derived `Deserialize` would request `deserialize_struct("Raw", ...)`
+    // instead. Most formats (JSON included) ignore the struct name, but a
+    // name-sensitive one (RON, for instance) would then reject
+    // `EventFormat`'s own serialized output before validation ever ran.
+    #[derive(serde::Deserialize)]
+    #[serde(rename = "EventFormat", rename_all = "snake_case", default)]
+    struct Raw {
+      slots: [Option<u8>; 12],
+      fields: u8,
+    }
+
+    impl Default for Raw {
+      fn default() -> Self {
+        let default = EventFormat::default();
+        Self {
+          slots: default.slots,
+          fields: default.fields,
+        }
+      }
+    }
+
+    let Raw { slots, fields } = Raw::deserialize(deserializer)?;
+    let declared = fields as usize;
+
+    for (slot, position) in slots.iter().enumerate() {
+      let Some(position) = *position else {
+        continue;
+      };
+      if position as usize >= declared {
+        return Err(serde::de::Error::custom(format_args!(
+          "EventFormat: {} is at position {position}, outside the {declared} declared field(s)",
+          EventField::ALL[slot].as_str()
+        )));
+      }
+      if slots[..slot].contains(&Some(position)) {
+        return Err(serde::de::Error::custom(format_args!(
+          "EventFormat: {} repeats position {position}, already used by another field",
+          EventField::ALL[slot].as_str()
+        )));
+      }
+    }
+
+    Ok(Self { slots, fields })
+  }
 }
 
 impl EventFormat {
